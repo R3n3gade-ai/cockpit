@@ -6,8 +6,8 @@
     "apps/*"
   ],
   "scripts": {
-    "dev": "npm run dev -w apps/terminal",
-    "build": "npm run build -w apps/terminal",
-    "start": "npm run start -w apps/terminal"
+    "dev": "npm run dev -w terminal",
+    "build": "npm run build -w terminal",
+    "start": "npm run start -w terminal"
   }
 }

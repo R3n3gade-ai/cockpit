@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "main": "main.js",
   "scripts": {
-    "dev": "concurrently -k -n NEXT,ELECTRON -c blue,green \"npm run dev -w apps/terminal\" \"wait-on http://127.0.0.1:3000 && electron .\"",
-    "build": "npm run build -w apps/terminal",
-    "start": "NODE_ENV=production concurrently -k -n NEXT,ELECTRON -c blue,green \"npm run start -w apps/terminal\" \"wait-on http://127.0.0.1:3000 && electron .\""
+    "dev": "concurrently -k -n NEXT,ELECTRON -c blue,green \"npm run dev -w terminal\" \"wait-on http://127.0.0.1:3000 && electron --no-sandbox .\"",
+    "build": "npm run build -w terminal",
+    "start": "NODE_ENV=production concurrently -k -n NEXT,ELECTRON -c blue,green \"npm run start -w terminal\" \"wait-on http://127.0.0.1:3000 && electron --no-sandbox .\""
   },
   "devDependencies": {
     "concurrently": "^9.1.2",
