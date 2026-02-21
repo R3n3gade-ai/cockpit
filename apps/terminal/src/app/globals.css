@@ -1,0 +1,35 @@
+:root {
+  --bg0: #05080d;
+  --bg1: #08111b;
+  --panel: rgba(8, 17, 27, 0.72);
+  --stroke: rgba(23, 182, 214, 0.25);
+  --stroke-strong: rgba(23, 182, 214, 0.55);
+  --text: #e6f6ff;
+  --muted: #9bb0c3;
+  --cyan: #00e5ff;
+  --amber: #ffb74d;
+  --red: #ff4d4d;
+  --green: #7ceb9a;
+  --shadow: 0 12px 30px rgba(0,0,0,0.55);
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  color: var(--text);
+  background: radial-gradient(1200px 800px at 50% 30%, rgba(0,229,255,0.06), transparent 60%),
+              radial-gradient(900px 600px at 20% 80%, rgba(255,183,77,0.05), transparent 60%),
+              linear-gradient(180deg, var(--bg0), var(--bg1));
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  overflow: hidden;
+}
+
+.hudGrid {
+  background-image:
+    linear-gradient(rgba(0,229,255,0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,229,255,0.04) 1px, transparent 1px);
+  background-size: 64px 64px;
+}
+
+a { color: inherit; }

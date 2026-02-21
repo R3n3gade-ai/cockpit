@@ -1,0 +1,13 @@
+{
+  "name": "achelion-demo",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w apps/terminal",
+    "build": "npm run build -w apps/terminal",
+    "start": "npm run start -w apps/terminal"
+  }
+}

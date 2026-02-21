@@ -1,0 +1,16 @@
+{
+  "name": "@achelion/shell",
+  "private": true,
+  "version": "0.1.0",
+  "main": "main.js",
+  "scripts": {
+    "dev": "concurrently -k -n NEXT,ELECTRON -c blue,green \"npm run dev -w apps/terminal\" \"wait-on http://127.0.0.1:3000 && electron .\"",
+    "build": "npm run build -w apps/terminal",
+    "start": "NODE_ENV=production concurrently -k -n NEXT,ELECTRON -c blue,green \"npm run start -w apps/terminal\" \"wait-on http://127.0.0.1:3000 && electron .\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "electron": "^34.3.0",
+    "wait-on": "^8.0.2"
+  }
+}
