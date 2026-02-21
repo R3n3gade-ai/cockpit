@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import type { PillarId, Regime, StressSource, SystemSnapshot } from './types';
+import type { ARESGateStatus, ARASModuleSignal, PillarId, Regime, StressSource, SystemSnapshot } from './types';
 
 // In-memory singleton demo engine.
 // Designed to be replaced later by real computation + adapters.
@@ -82,11 +82,28 @@ class Engine {
       ])
     ) as SystemSnapshot['pillars'];
 
+    const arasModules: ARASModuleSignal[] = [
+      { name: 'Deleveraging Risk', risk_score: 0.18, stress_flag: false, confidence: 0.88, source_bucket: 'MIXED' },
+      { name: 'Crypto Microstructure', risk_score: 0.16, stress_flag: false, confidence: 0.86, source_bucket: 'CRYPTO' },
+      { name: 'Margin Stress', risk_score: 0.14, stress_flag: false, confidence: 0.84, source_bucket: 'EQUITY' },
+      { name: 'Dealer Gamma', risk_score: 0.15, stress_flag: false, confidence: 0.83, source_bucket: 'EQUITY' },
+      { name: 'PCR Regime', risk_score: 0.17, stress_flag: false, confidence: 0.82, source_bucket: 'EQUITY' },
+      { name: 'Shutdown Risk', risk_score: 0.08, stress_flag: false, confidence: 0.80, source_bucket: 'CRYPTO' },
+    ];
+
+    const aresGates: ARESGateStatus = {
+      gate1_stress_normalization: 'WAIT',
+      gate2_conviction: 'WAIT',
+      gate3_confirmation: 'WAIT',
+    };
+
     return {
       ts: t,
       regime: 'RISK_ON',
       exposureCeilingGross: 0.9,
       stressSource: 'GENERAL',
+      arasModules,
+      aresGates,
       pillars,
       alerts: [
         {

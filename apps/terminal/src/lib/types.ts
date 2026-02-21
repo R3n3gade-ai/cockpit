@@ -32,11 +32,30 @@ export interface AlertEvent {
   tags?: string[];
 }
 
+export interface ARASModuleSignal {
+  name: string;
+  risk_score: number; // 0..1
+  stress_flag: boolean;
+  confidence: number; // 0.5..0.95 in spec
+  source_bucket: 'CRYPTO' | 'EQUITY' | 'MIXED';
+}
+
+export interface ARESGateStatus {
+  gate1_stress_normalization: 'PASS' | 'FAIL' | 'WAIT';
+  gate2_conviction: 'PASS' | 'FAIL' | 'WAIT';
+  gate3_confirmation: 'PASS' | 'FAIL' | 'WAIT';
+}
+
 export interface SystemSnapshot {
   ts: number;
   regime: Regime;
   exposureCeilingGross: number; // 0..1
   stressSource: StressSource;
+
+  // Decompositions for drilldowns
+  arasModules?: ARASModuleSignal[];
+  aresGates?: ARESGateStatus;
+
   pillars: Record<PillarId, PillarSummary>;
   alerts: AlertEvent[];
 }
