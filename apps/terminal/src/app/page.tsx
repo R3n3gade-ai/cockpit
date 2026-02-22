@@ -18,6 +18,7 @@ function fmtPct(x: number) {
 
 export default function Home() {
   const [snap, setSnap] = useState<SystemSnapshot | null>(null);
+  const [history, setHistory] = useState<SystemSnapshot[]>([]);
   const [selected, setSelected] = useState<PillarId | null>(null);
   const [tab, setTab] = useState<DrawerTab>('overview');
   const drawerOpen = selected != null;
@@ -27,8 +28,12 @@ export default function Home() {
     es.addEventListener('snapshot', (evt) => {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const data = JSON.parse((evt as any).data);
+        const data = JSON.parse((evt as any).data) as SystemSnapshot;
         setSnap(data);
+        setHistory((h) => {
+          const next = [...h, data];
+          return next.length > 140 ? next.slice(next.length - 140) : next;
+        });
       } catch {
         // ignore
       }
@@ -50,6 +55,26 @@ export default function Home() {
   }, [snap]);
 
   const selectedPillar = selected && snap ? snap.pillars[selected] : null;
+
+  const pillarHistory = useMemo(() => {
+    if (!selected) return [] as Array<{ ts: number; score: number | null; confidence: number | null }>;
+    return history
+      .map((s) => {
+        const p = s.pillars?.[selected];
+        return {
+          ts: s.ts,
+          score: typeof p?.score === 'number' ? p.score : null,
+          confidence: typeof p?.confidence === 'number' ? p.confidence : null,
+        };
+      })
+      .slice(-80);
+  }, [history, selected]);
+
+  const selectedEvents = useMemo(() => {
+    if (!snap || !selected) return [];
+    const tag = `pillar:${selected}`;
+    return (snap.alerts ?? []).filter((a) => (a.tags ?? []).includes(tag)).slice(0, 80);
+  }, [snap, selected]);
 
   const onAutoDemo = async () => {
     await fetch('/api/control', {
@@ -240,22 +265,158 @@ export default function Home() {
                     {selectedPillar.confidence == null ? '—' : selectedPillar.confidence.toFixed(3)}
                   </div>
                 </div>
+
+                {selectedPillar.id === 'ARAS' ? (
+                  <>
+                    <div style={{ marginTop: 16, fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+                      ARAS modules (1–6)
+                    </div>
+                    <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {(snap?.arasModules ?? []).map((m, i) => (
+                        <div
+                          key={`${m.name}-${i}`}
+                          className={styles.alertItem}
+                          style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline' }}
+                        >
+                          <div>
+                            <div className={styles.alertTitle}>
+                              {i + 1}. {m.name}
+                            </div>
+                            <div className={styles.alertDetail}>
+                              bucket {m.source_bucket} · conf {m.confidence.toFixed(2)} · stress {m.stress_flag ? 'YES' : 'no'}
+                            </div>
+                          </div>
+                          <div
+                            style={{
+                              fontWeight: 800,
+                              color: m.risk_score >= 0.65 ? 'rgba(255,77,77,0.95)' : 'rgba(23,182,214,0.95)',
+                            }}
+                          >
+                            {m.risk_score.toFixed(2)}
+                          </div>
+                        </div>
+                      ))}
+                      {!snap?.arasModules?.length ? <div className={styles.small}>No ARAS module data.</div> : null}
+                    </div>
+                  </>
+                ) : null}
+
+                {selectedPillar.id === 'ARES' ? (
+                  <>
+                    <div style={{ marginTop: 16, fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+                      ARES gates
+                    </div>
+                    <div style={{ marginTop: 10 }} className={styles.kv}>
+                      <div className={styles.kvKey}>Gate 1</div>
+                      <div className={styles.kvVal}>{snap?.aresGates?.gate1_stress_normalization ?? '—'}</div>
+
+                      <div className={styles.kvKey}>Gate 2</div>
+                      <div className={styles.kvVal}>{snap?.aresGates?.gate2_conviction ?? '—'}</div>
+
+                      <div className={styles.kvKey}>Gate 3</div>
+                      <div className={styles.kvVal}>{snap?.aresGates?.gate3_confirmation ?? '—'}</div>
+                    </div>
+                  </>
+                ) : null}
+
                 <div style={{ marginTop: 14 }} className={styles.small}>
-                  Next: we’ll replace demo fields with real spec-driven metrics per pillar (ARAS modules, ARES gates, hedges, caps, overlays).
+                  Spec-shaped drilldowns are live: ARAS module decomposition + ARES gate status.
                 </div>
               </>
             ) : tab === 'logic' ? (
-              <div className={styles.small}>
-                Logic view placeholder. For ARAS, we’ll show module scores, confidence calculation, stress_source logic (including CORRELATED) and regime thresholds.
-              </div>
+              selectedPillar.id === 'ARAS' ? (
+                <div className={styles.small}>
+                  <div style={{ fontWeight: 800, color: 'rgba(230,246,255,0.92)' }}>ARAS logic (demo rules)</div>
+                  <ul>
+                    <li>stressSource compares crypto (modules 2,6) vs equity (3,4,5) averages.</li>
+                    <li>If both &gt; 0.5 and within 0.15 → CORRELATED.</li>
+                    <li>If ≥3 stress flags → regime forced to CRASH + ceiling capped at 15%.</li>
+                    <li>ARAS pillar score is a confidence-weighted composite (stress flags upweight risk).</li>
+                  </ul>
+                </div>
+              ) : selectedPillar.id === 'ARES' ? (
+                <div className={styles.small}>
+                  <div style={{ fontWeight: 800, color: 'rgba(230,246,255,0.92)' }}>ARES logic (demo rules)</div>
+                  <ul>
+                    <li>3 gates: stress normalization → conviction → confirmation.</li>
+                    <li>Pillar status becomes TRIGGERED when all 3 are PASS.</li>
+                    <li>In the demo scenario, gates advance deterministically over the phase window.</li>
+                  </ul>
+                </div>
+              ) : (
+                <div className={styles.small}>Logic view not yet implemented for this pillar.</div>
+              )
             ) : tab === 'history' ? (
-              <div className={styles.small}>
-                History view placeholder. In demo we can show last N snapshots and sparklines. In production: full time-series + replay.
-              </div>
+              <>
+                <div className={styles.small} style={{ marginBottom: 10 }}>
+                  Rolling local buffer (last {pillarHistory.length} points). This is client-side only in the demo.
+                </div>
+
+                {pillarHistory.length ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div>
+                      <div className={styles.kpiLabel}>Score</div>
+                      <div style={{ display: 'flex', gap: 2, alignItems: 'flex-end', height: 44 }}>
+                        {pillarHistory.map((pt) => (
+                          <div
+                            key={pt.ts}
+                            title={pt.score == null ? '—' : pt.score.toFixed(3)}
+                            style={{
+                              width: 4,
+                              height: `${Math.max(2, Math.round((pt.score ?? 0) * 44))}px`,
+                              background: 'rgba(23,182,214,0.75)',
+                              borderRadius: 2,
+                              opacity: pt.score == null ? 0.25 : 1,
+                            }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className={styles.kpiLabel}>Confidence</div>
+                      <div style={{ display: 'flex', gap: 2, alignItems: 'flex-end', height: 44 }}>
+                        {pillarHistory.map((pt) => (
+                          <div
+                            key={pt.ts + 1}
+                            title={pt.confidence == null ? '—' : pt.confidence.toFixed(3)}
+                            style={{
+                              width: 4,
+                              height: `${Math.max(2, Math.round((pt.confidence ?? 0) * 44))}px`,
+                              background: 'rgba(230,246,255,0.55)',
+                              borderRadius: 2,
+                              opacity: pt.confidence == null ? 0.25 : 1,
+                            }}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className={styles.small}>No history yet — wait a second for snapshots.</div>
+                )}
+              </>
             ) : (
-              <div className={styles.small}>
-                Events view placeholder. This will filter the event log to only events tagged with this pillar.
-              </div>
+              <>
+                <div className={styles.small} style={{ marginBottom: 10 }}>
+                  Events tagged to this pillar.
+                </div>
+                {selectedEvents.length ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {selectedEvents.map((a) => (
+                      <div key={a.id} className={styles.alertItem}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                          <div className={styles.alertTitle}>{a.title}</div>
+                          <div className={badgeClass(a.severity)}>{a.severity}</div>
+                        </div>
+                        {a.detail ? <div className={styles.alertDetail}>{a.detail}</div> : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className={styles.small}>No pillar-tagged events yet. (Try forcing phases.)</div>
+                )}
+              </>
             )}
           </div>
         </div>
