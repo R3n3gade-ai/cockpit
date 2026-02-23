@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import styles from './page.module.css';
-import type { PillarId, Severity, SystemSnapshot } from '@/lib/types';
+import type { PillarId, PillarSignal, Severity, SystemSnapshot } from '@/lib/types';
 
 type DrawerTab = 'overview' | 'logic' | 'history' | 'events';
 
@@ -74,6 +74,16 @@ export default function Home() {
     if (!snap || !selected) return [];
     const tag = `pillar:${selected}`;
     return (snap.alerts ?? []).filter((a) => (a.tags ?? []).includes(tag)).slice(0, 80);
+  }, [snap, selected]);
+
+  const selectedSignals = useMemo(() => {
+    if (!snap || !selected) return null as PillarSignal[] | null;
+    if (selected === 'MACRO') return snap.macroSignals ?? null;
+    if (selected === 'MASTER') return snap.masterSignals ?? null;
+    if (selected === 'KEVLAR') return snap.kevlarSignals ?? null;
+    if (selected === 'PERM') return snap.permSignals ?? null;
+    if (selected === 'SLOF') return snap.slofSignals ?? null;
+    return null;
   }, [snap, selected]);
 
   const onAutoDemo = async () => {
@@ -319,8 +329,40 @@ export default function Home() {
                   </>
                 ) : null}
 
+                {selectedSignals?.length ? (
+                  <>
+                    <div style={{ marginTop: 16, fontSize: 12, letterSpacing: '0.12em', textTransform: 'uppercase' }}>
+                      {selectedPillar.id} signals
+                    </div>
+                    <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {selectedSignals.map((s, i) => (
+                        <div
+                          key={`${s.name}-${i}`}
+                          className={styles.alertItem}
+                          style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline' }}
+                        >
+                          <div>
+                            <div className={styles.alertTitle}>{s.name}</div>
+                            <div className={styles.alertDetail}>
+                              {s.valueText} · conf {s.confidence.toFixed(2)} · {s.level}
+                            </div>
+                          </div>
+                          <div
+                            style={{
+                              fontWeight: 800,
+                              color: s.level === 'RISK' ? 'rgba(255,77,77,0.95)' : s.level === 'WATCH' ? 'rgba(255,183,77,0.95)' : 'rgba(23,182,214,0.95)',
+                            }}
+                          >
+                            {s.score.toFixed(2)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : null}
+
                 <div style={{ marginTop: 14 }} className={styles.small}>
-                  Spec-shaped drilldowns are live: ARAS module decomposition + ARES gate status.
+                  Drilldowns: ARAS modules, ARES gates, plus per-pillar signals (Macro/Master/Kevlar/Perm/SLOF).
                 </div>
               </>
             ) : tab === 'logic' ? (

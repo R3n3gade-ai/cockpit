@@ -46,6 +46,16 @@ export interface ARESGateStatus {
   gate3_confirmation: 'PASS' | 'FAIL' | 'WAIT';
 }
 
+export type PillarSignalLevel = 'OK' | 'WATCH' | 'RISK';
+
+export interface PillarSignal {
+  name: string;
+  valueText: string;
+  score: number; // 0..1 intensity/risk
+  confidence: number; // 0..1
+  level: PillarSignalLevel;
+}
+
 export interface SystemSnapshot {
   ts: number;
   regime: Regime;
@@ -55,6 +65,12 @@ export interface SystemSnapshot {
   // Decompositions for drilldowns
   arasModules?: ARASModuleSignal[];
   aresGates?: ARESGateStatus;
+
+  macroSignals?: PillarSignal[];
+  masterSignals?: PillarSignal[];
+  kevlarSignals?: PillarSignal[];
+  permSignals?: PillarSignal[];
+  slofSignals?: PillarSignal[];
 
   pillars: Record<PillarId, PillarSummary>;
   alerts: AlertEvent[];

@@ -1,5 +1,13 @@
 import { randomUUID } from 'crypto';
-import type { ARESGateStatus, ARASModuleSignal, PillarId, Regime, StressSource, SystemSnapshot } from './types';
+import type {
+  ARESGateStatus,
+  ARASModuleSignal,
+  PillarId,
+  PillarSignal,
+  Regime,
+  StressSource,
+  SystemSnapshot,
+} from './types';
 
 // In-memory singleton demo engine.
 // Designed to be replaced later by real computation + adapters.
@@ -27,6 +35,12 @@ const now = () => Date.now();
 
 function clamp01(x: number) {
   return Math.max(0, Math.min(1, x));
+}
+
+function levelFromScore(score: number): PillarSignal['level'] {
+  if (score >= 0.7) return 'RISK';
+  if (score >= 0.45) return 'WATCH';
+  return 'OK';
 }
 
 class Engine {
@@ -99,6 +113,14 @@ class Engine {
       gate3_confirmation: 'WAIT',
     };
 
+    const mk = (name: string, valueText: string, score: number, confidence: number): PillarSignal => ({
+      name,
+      valueText,
+      score: clamp01(score),
+      confidence: clamp01(confidence),
+      level: levelFromScore(score),
+    });
+
     return {
       ts: t,
       regime: 'RISK_ON',
@@ -106,6 +128,13 @@ class Engine {
       stressSource: 'GENERAL',
       arasModules,
       aresGates,
+
+      macroSignals: [mk('Liquidity ROC', 'flat', 0.22, 0.78), mk('Vol regime', 'low', 0.18, 0.82), mk('Rates impulse', 'benign', 0.16, 0.74)],
+      masterSignals: [mk('Execution mode', 'normal', 0.20, 0.84), mk('Slippage est.', '6 bps', 0.18, 0.76), mk('Kill-switch', 'armed', 0.12, 0.92)],
+      kevlarSignals: [mk('Concentration caps', 'nominal', 0.18, 0.86), mk('DD guard', 'nominal', 0.16, 0.82), mk('Sector skew', 'ok', 0.20, 0.78)],
+      permSignals: [mk('Profit lock', 'inactive', 0.14, 0.80), mk('Trail stops', 'inactive', 0.12, 0.76), mk('TP ladder', 'inactive', 0.10, 0.74)],
+      slofSignals: [mk('Overlay eligibility', 'allowed', 0.16, 0.82), mk('Sizing envelope', 'normal', 0.18, 0.78), mk('Blocked reason', '—', 0.05, 0.90)],
+
       pillars,
       alerts: [
         {
@@ -197,6 +226,24 @@ class Engine {
     };
   }
 
+  private setSignals(
+    key: 'macroSignals' | 'masterSignals' | 'kevlarSignals' | 'permSignals' | 'slofSignals',
+    signals: Array<Omit<PillarSignal, 'level'> & { level?: PillarSignal['level'] }>
+  ) {
+    // Normalize + derive level if omitted
+    this.snapshot[key] = signals.map((s) => {
+      const score = clamp01(s.score);
+      const confidence = clamp01(s.confidence);
+      return {
+        name: s.name,
+        valueText: s.valueText,
+        score,
+        confidence,
+        level: s.level ?? levelFromScore(score),
+      };
+    });
+  }
+
   private phaseAgeSec() {
     return (now() - this.phaseT0) / 1000;
   }
@@ -243,9 +290,40 @@ class Engine {
 
         setGates({ gate1_stress_normalization: 'WAIT', gate2_conviction: 'WAIT', gate3_confirmation: 'WAIT' });
 
+        this.setSignals('macroSignals', [
+          { name: 'Liquidity ROC', valueText: 'flat', score: 0.22, confidence: 0.78 },
+          { name: 'Vol regime', valueText: 'low', score: 0.18, confidence: 0.82 },
+          { name: 'Rates impulse', valueText: 'benign', score: 0.16, confidence: 0.74 },
+          { name: 'Cross-asset corr', valueText: 'contained', score: 0.20, confidence: 0.76 },
+        ]);
+        this.setSignals('masterSignals', [
+          { name: 'Execution mode', valueText: 'normal', score: 0.20, confidence: 0.84 },
+          { name: 'Queue depth', valueText: 'healthy', score: 0.18, confidence: 0.80 },
+          { name: 'Slippage est.', valueText: '6 bps', score: 0.18, confidence: 0.76 },
+        ]);
+        this.setSignals('kevlarSignals', [
+          { name: 'Concentration caps', valueText: 'nominal', score: 0.18, confidence: 0.86 },
+          { name: 'DD guard', valueText: 'nominal', score: 0.16, confidence: 0.82 },
+          { name: 'Sector skew', valueText: 'ok', score: 0.20, confidence: 0.78 },
+        ]);
+        this.setSignals('permSignals', [
+          { name: 'Profit lock', valueText: 'inactive', score: 0.14, confidence: 0.80 },
+          { name: 'Trail stops', valueText: 'inactive', score: 0.12, confidence: 0.76 },
+          { name: 'TP ladder', valueText: 'inactive', score: 0.10, confidence: 0.74 },
+        ]);
+        this.setSignals('slofSignals', [
+          { name: 'Overlay eligibility', valueText: 'allowed', score: 0.16, confidence: 0.82 },
+          { name: 'Sizing envelope', valueText: 'normal', score: 0.18, confidence: 0.78 },
+          { name: 'Blocked reason', valueText: '—', score: 0.05, confidence: 0.90 },
+        ]);
+
         this.setPillar('ARAS', { status: 'OK', headline: 'Risk-on; ceiling 90%' });
-        this.setPillar('ARES', { status: 'SUSPENDED', headline: 'Monitoring (no re-entry needed)' });
+        this.setPillar('MACRO', { status: 'OK', headline: 'Liquidity stable' });
+        this.setPillar('MASTER', { status: 'OK', headline: 'Execution normal' });
+        this.setPillar('KEVLAR', { status: 'OK', headline: 'Caps nominal' });
+        this.setPillar('PERM', { status: 'OK', headline: 'Profit protection idle' });
         this.setPillar('SLOF', { status: 'ACTIVE', headline: 'Overlay permitted (bounded)' });
+        this.setPillar('ARES', { status: 'SUSPENDED', headline: 'Monitoring (no re-entry needed)' });
 
         if (age > 18) this.setPhase('BUILD_STRESS');
         break;
@@ -263,11 +341,42 @@ class Engine {
           { risk_score: 0.53, stress_flag: true, confidence: 0.76 },
         ]);
 
+        this.setSignals('macroSignals', [
+          { name: 'Liquidity ROC', valueText: 'down', score: 0.62, confidence: 0.76 },
+          { name: 'Vol regime', valueText: 'rising', score: 0.55, confidence: 0.74 },
+          { name: 'Rates impulse', valueText: 'tightening', score: 0.48, confidence: 0.70 },
+          { name: 'Cross-asset corr', valueText: 'high', score: 0.64, confidence: 0.72 },
+        ]);
+        this.setSignals('masterSignals', [
+          { name: 'Execution mode', valueText: 'defensive', score: 0.46, confidence: 0.78 },
+          { name: 'Queue depth', valueText: 'thinning', score: 0.52, confidence: 0.72 },
+          { name: 'Slippage est.', valueText: '18 bps', score: 0.56, confidence: 0.70 },
+        ]);
+        this.setSignals('kevlarSignals', [
+          { name: 'Concentration caps', valueText: 'tightening', score: 0.52, confidence: 0.80 },
+          { name: 'DD guard', valueText: 'watch', score: 0.48, confidence: 0.76 },
+          { name: 'Sector skew', valueText: 'elevated', score: 0.50, confidence: 0.72 },
+        ]);
+        this.setSignals('permSignals', [
+          { name: 'Profit lock', valueText: 'armed', score: 0.40, confidence: 0.78 },
+          { name: 'Trail stops', valueText: 'armed', score: 0.38, confidence: 0.74 },
+          { name: 'TP ladder', valueText: 'armed', score: 0.34, confidence: 0.72 },
+        ]);
+        this.setSignals('slofSignals', [
+          { name: 'Overlay eligibility', valueText: 'restricted', score: 0.52, confidence: 0.76 },
+          { name: 'Sizing envelope', valueText: 'tight', score: 0.56, confidence: 0.74 },
+          { name: 'Blocked reason', valueText: 'vol regime', score: 0.30, confidence: 0.82 },
+        ]);
+
         // gates still waiting during stress build
         setGates({ gate1_stress_normalization: 'WAIT', gate2_conviction: 'WAIT', gate3_confirmation: 'WAIT' });
 
         this.setPillar('ARAS', { status: 'ACTIVE', headline: 'Stress building (correlated)' });
         this.setPillar('MACRO', { status: 'ACTIVE', headline: 'Liquidity ROC deteriorating', score: 0.62 });
+        this.setPillar('MASTER', { status: 'ACTIVE', headline: 'Execution defensive', score: 0.55 });
+        this.setPillar('KEVLAR', { status: 'ACTIVE', headline: 'Caps tightening', score: 0.50 });
+        this.setPillar('PERM', { status: 'ACTIVE', headline: 'Profit protection arming', score: 0.40 });
+        this.setPillar('SLOF', { status: 'SUSPENDED', headline: 'Overlay restricted', score: 0.55 });
 
         if (Math.random() < 0.12)
           this.pushAlert(
@@ -276,6 +385,11 @@ class Engine {
             'Crypto + equity modules elevated within 0.15 → CORRELATED.',
             ['pillar:ARAS', 'scenario']
           );
+        if (Math.random() < 0.10)
+          this.pushAlert('watch', 'MACRO: liquidity deteriorating', 'Liquidity ROC down; cross-asset corr rising.', [
+            'pillar:MACRO',
+            'scenario',
+          ]);
 
         if (age > 25) this.setPhase('CIRCUIT_BREAK');
         break;
@@ -292,11 +406,42 @@ class Engine {
           { risk_score: 0.68, stress_flag: true, confidence: 0.68 },
         ]);
 
+        this.setSignals('macroSignals', [
+          { name: 'Liquidity ROC', valueText: 'breakdown', score: 0.82, confidence: 0.74 },
+          { name: 'Vol regime', valueText: 'spike', score: 0.86, confidence: 0.72 },
+          { name: 'Rates impulse', valueText: 'risk-off', score: 0.70, confidence: 0.66 },
+          { name: 'Cross-asset corr', valueText: '1.0', score: 0.88, confidence: 0.70 },
+        ]);
+        this.setSignals('masterSignals', [
+          { name: 'Execution mode', valueText: 'liquidate', score: 0.78, confidence: 0.80 },
+          { name: 'Queue depth', valueText: 'thin', score: 0.74, confidence: 0.72 },
+          { name: 'Slippage est.', valueText: '55 bps', score: 0.82, confidence: 0.68 },
+        ]);
+        this.setSignals('kevlarSignals', [
+          { name: 'Concentration caps', valueText: 'hard', score: 0.76, confidence: 0.86 },
+          { name: 'DD guard', valueText: 'active', score: 0.80, confidence: 0.82 },
+          { name: 'Sector skew', valueText: 'forced unwind', score: 0.70, confidence: 0.70 },
+        ]);
+        this.setSignals('permSignals', [
+          { name: 'Profit lock', valueText: 'engaged', score: 0.74, confidence: 0.78 },
+          { name: 'Trail stops', valueText: 'active', score: 0.72, confidence: 0.74 },
+          { name: 'TP ladder', valueText: 'disabled', score: 0.55, confidence: 0.70 },
+        ]);
+        this.setSignals('slofSignals', [
+          { name: 'Overlay eligibility', valueText: 'blocked', score: 0.86, confidence: 0.84 },
+          { name: 'Sizing envelope', valueText: '0', score: 0.90, confidence: 0.86 },
+          { name: 'Blocked reason', valueText: 'circuit breaker', score: 0.70, confidence: 0.92 },
+        ]);
+
         // In circuit break we hard-cap regardless
         this.setRegime('DEFENSIVE', Math.min(this.snapshot.exposureCeilingGross, 0.4), this.snapshot.stressSource);
 
         this.setPillar('ARAS', { status: 'TRIGGERED', headline: 'Circuit breaker fired (one-way)' });
-        this.setPillar('MASTER', { status: 'ACTIVE', headline: 'Pre-calculated orderbook executing' });
+        this.setPillar('MACRO', { status: 'TRIGGERED', headline: 'Macro shock (corr=1)', score: 0.86 });
+        this.setPillar('MASTER', { status: 'ACTIVE', headline: 'Pre-calculated orderbook executing', score: 0.80 });
+        this.setPillar('KEVLAR', { status: 'TRIGGERED', headline: 'Hard caps engaged', score: 0.78 });
+        this.setPillar('PERM', { status: 'ACTIVE', headline: 'Profit protection engaged', score: 0.74 });
+        this.setPillar('SLOF', { status: 'SUSPENDED', headline: 'Overlay blocked', score: 0.90 });
 
         this.pushAlert(
           'critical',
@@ -322,9 +467,44 @@ class Engine {
           { risk_score: 0.55, stress_flag: true, confidence: 0.72 },
         ]);
 
-        this.setPillar('KEVLAR', { status: 'ACTIVE', headline: 'Concentration caps enforced' });
-        this.setPillar('PERM', { status: 'ACTIVE', headline: 'Profit protection active' });
-        this.setPillar('SLOF', { status: 'SUSPENDED', headline: 'Overlay suspended (defensive)' });
+        this.setSignals('macroSignals', [
+          { name: 'Liquidity ROC', valueText: 'stressed', score: 0.64, confidence: 0.74 },
+          { name: 'Vol regime', valueText: 'high', score: 0.70, confidence: 0.72 },
+          { name: 'Rates impulse', valueText: 'risk-off', score: 0.56, confidence: 0.68 },
+          { name: 'Cross-asset corr', valueText: 'elevated', score: 0.66, confidence: 0.70 },
+        ]);
+        this.setSignals('masterSignals', [
+          { name: 'Execution mode', valueText: 'delever', score: 0.66, confidence: 0.82 },
+          { name: 'Queue depth', valueText: 'recovering', score: 0.54, confidence: 0.74 },
+          { name: 'Slippage est.', valueText: '28 bps', score: 0.60, confidence: 0.72 },
+        ]);
+        this.setSignals('kevlarSignals', [
+          { name: 'Concentration caps', valueText: 'enforced', score: 0.62, confidence: 0.86 },
+          { name: 'DD guard', valueText: 'active', score: 0.58, confidence: 0.82 },
+          { name: 'Sector skew', valueText: 'reducing', score: 0.50, confidence: 0.74 },
+        ]);
+        this.setSignals('permSignals', [
+          { name: 'Profit lock', valueText: 'active', score: 0.54, confidence: 0.80 },
+          { name: 'Trail stops', valueText: 'active', score: 0.50, confidence: 0.76 },
+          { name: 'TP ladder', valueText: 'paused', score: 0.38, confidence: 0.74 },
+        ]);
+        this.setSignals('slofSignals', [
+          { name: 'Overlay eligibility', valueText: 'blocked', score: 0.70, confidence: 0.86 },
+          { name: 'Sizing envelope', valueText: 'tight', score: 0.60, confidence: 0.78 },
+          { name: 'Blocked reason', valueText: 'defensive', score: 0.42, confidence: 0.84 },
+        ]);
+
+        this.setPillar('MACRO', { status: 'ACTIVE', headline: 'Macro still stressed', score: 0.64 });
+        this.setPillar('MASTER', { status: 'ACTIVE', headline: 'Deleveraging execution', score: 0.66 });
+        this.setPillar('KEVLAR', { status: 'ACTIVE', headline: 'Concentration caps enforced', score: 0.62 });
+        this.setPillar('PERM', { status: 'ACTIVE', headline: 'Profit protection active', score: 0.54 });
+        this.setPillar('SLOF', { status: 'SUSPENDED', headline: 'Overlay suspended (defensive)', score: 0.60 });
+
+        if (Math.random() < 0.08)
+          this.pushAlert('info', 'KEVLAR: caps enforced', 'Concentration + exposure caps actively constraining sizing.', [
+            'pillar:KEVLAR',
+            'scenario',
+          ]);
 
         if (age > 18) this.setPhase('STABILIZE');
         break;
@@ -342,8 +522,39 @@ class Engine {
           { risk_score: 0.28, stress_flag: false, confidence: 0.82 },
         ]);
 
+        this.setSignals('macroSignals', [
+          { name: 'Liquidity ROC', valueText: 'flattening', score: 0.48, confidence: 0.78 },
+          { name: 'Vol regime', valueText: 'falling', score: 0.40, confidence: 0.76 },
+          { name: 'Rates impulse', valueText: 'neutral', score: 0.30, confidence: 0.72 },
+          { name: 'Cross-asset corr', valueText: 'cooling', score: 0.38, confidence: 0.74 },
+        ]);
+        this.setSignals('masterSignals', [
+          { name: 'Execution mode', valueText: 'normalize', score: 0.36, confidence: 0.82 },
+          { name: 'Queue depth', valueText: 'improving', score: 0.34, confidence: 0.76 },
+          { name: 'Slippage est.', valueText: '12 bps', score: 0.38, confidence: 0.74 },
+        ]);
+        this.setSignals('kevlarSignals', [
+          { name: 'Concentration caps', valueText: 'active', score: 0.40, confidence: 0.84 },
+          { name: 'DD guard', valueText: 'active', score: 0.36, confidence: 0.80 },
+          { name: 'Sector skew', valueText: 'reducing', score: 0.32, confidence: 0.76 },
+        ]);
+        this.setSignals('permSignals', [
+          { name: 'Profit lock', valueText: 'active', score: 0.34, confidence: 0.78 },
+          { name: 'Trail stops', valueText: 'active', score: 0.30, confidence: 0.76 },
+          { name: 'TP ladder', valueText: 'rebuilding', score: 0.26, confidence: 0.72 },
+        ]);
+        this.setSignals('slofSignals', [
+          { name: 'Overlay eligibility', valueText: 'restricted', score: 0.40, confidence: 0.78 },
+          { name: 'Sizing envelope', valueText: 'tight', score: 0.42, confidence: 0.76 },
+          { name: 'Blocked reason', valueText: 'cooldown', score: 0.22, confidence: 0.82 },
+        ]);
+
         this.setPillar('ARAS', { status: 'ACTIVE', headline: 'Stabilizing; waiting confirmations' });
         this.setPillar('MACRO', { status: 'ACTIVE', headline: 'Liquidity ROC flattening', score: 0.48 });
+        this.setPillar('MASTER', { status: 'ACTIVE', headline: 'Execution normalizing', score: 0.36 });
+        this.setPillar('KEVLAR', { status: 'ACTIVE', headline: 'Caps remain active', score: 0.40 });
+        this.setPillar('PERM', { status: 'ACTIVE', headline: 'Profit protection cooling', score: 0.34 });
+        this.setPillar('SLOF', { status: 'SUSPENDED', headline: 'Overlay cooldown', score: 0.42 });
 
         // Gate 1 begins to flip as stress normalizes
         setGates({ gate1_stress_normalization: age > 10 ? 'PASS' : 'WAIT', gate2_conviction: 'WAIT', gate3_confirmation: 'WAIT' });
@@ -365,6 +576,33 @@ class Engine {
           { risk_score: 0.20, stress_flag: false, confidence: 0.83 },
         ]);
 
+        this.setSignals('macroSignals', [
+          { name: 'Liquidity ROC', valueText: 'stable', score: 0.30, confidence: 0.82 },
+          { name: 'Vol regime', valueText: 'normal', score: 0.26, confidence: 0.80 },
+          { name: 'Rates impulse', valueText: 'neutral', score: 0.24, confidence: 0.76 },
+          { name: 'Cross-asset corr', valueText: 'normal', score: 0.28, confidence: 0.78 },
+        ]);
+        this.setSignals('masterSignals', [
+          { name: 'Execution mode', valueText: 'ready', score: 0.28, confidence: 0.84 },
+          { name: 'Queue depth', valueText: 'healthy', score: 0.24, confidence: 0.80 },
+          { name: 'Slippage est.', valueText: '10 bps', score: 0.28, confidence: 0.78 },
+        ]);
+        this.setSignals('kevlarSignals', [
+          { name: 'Concentration caps', valueText: 'soft', score: 0.30, confidence: 0.84 },
+          { name: 'DD guard', valueText: 'soft', score: 0.28, confidence: 0.82 },
+          { name: 'Sector skew', valueText: 'ok', score: 0.24, confidence: 0.78 },
+        ]);
+        this.setSignals('permSignals', [
+          { name: 'Profit lock', valueText: 'standby', score: 0.24, confidence: 0.78 },
+          { name: 'Trail stops', valueText: 'standby', score: 0.22, confidence: 0.76 },
+          { name: 'TP ladder', valueText: 'standby', score: 0.20, confidence: 0.74 },
+        ]);
+        this.setSignals('slofSignals', [
+          { name: 'Overlay eligibility', valueText: 'allowed', score: 0.22, confidence: 0.84 },
+          { name: 'Sizing envelope', valueText: 'bounded', score: 0.26, confidence: 0.78 },
+          { name: 'Blocked reason', valueText: '—', score: 0.05, confidence: 0.90 },
+        ]);
+
         // Gate progression for demo (timed, deterministic)
         setGates({
           gate1_stress_normalization: 'PASS',
@@ -377,6 +615,12 @@ class Engine {
           status: passCount >= 3 ? 'TRIGGERED' : 'ACTIVE',
           headline: passCount >= 3 ? 'Gates passed (3/3) — ready' : `Gate checks in progress (${passCount}/3)`,
         });
+
+        this.setPillar('MACRO', { status: 'ACTIVE', headline: 'Macro normalized (gate check)', score: 0.30 });
+        this.setPillar('MASTER', { status: 'ACTIVE', headline: 'Execution ready', score: 0.28 });
+        this.setPillar('KEVLAR', { status: 'ACTIVE', headline: 'Guards soft', score: 0.30 });
+        this.setPillar('PERM', { status: 'ACTIVE', headline: 'Protection standby', score: 0.24 });
+        this.setPillar('SLOF', { status: 'ACTIVE', headline: 'Overlay allowed (bounded)', score: 0.26 });
 
         if (Math.random() < 0.10)
           this.pushAlert('info', 'ARES gate update', 'Stress normalization passing; awaiting conviction/confirmation.', [
@@ -393,8 +637,39 @@ class Engine {
 
         setGates({ gate1_stress_normalization: 'PASS', gate2_conviction: 'PASS', gate3_confirmation: 'PASS' });
 
+        this.setSignals('macroSignals', [
+          { name: 'Liquidity ROC', valueText: 'good', score: 0.22, confidence: 0.84 },
+          { name: 'Vol regime', valueText: 'normal', score: 0.20, confidence: 0.82 },
+          { name: 'Rates impulse', valueText: 'benign', score: 0.18, confidence: 0.78 },
+          { name: 'Cross-asset corr', valueText: 'contained', score: 0.22, confidence: 0.80 },
+        ]);
+        this.setSignals('masterSignals', [
+          { name: 'Execution mode', valueText: 'attack-ready', score: 0.26, confidence: 0.86 },
+          { name: 'Queue depth', valueText: 'healthy', score: 0.22, confidence: 0.82 },
+          { name: 'Slippage est.', valueText: '9 bps', score: 0.24, confidence: 0.80 },
+        ]);
+        this.setSignals('kevlarSignals', [
+          { name: 'Concentration caps', valueText: 'soft', score: 0.24, confidence: 0.86 },
+          { name: 'DD guard', valueText: 'soft', score: 0.22, confidence: 0.84 },
+          { name: 'Sector skew', valueText: 'ok', score: 0.20, confidence: 0.78 },
+        ]);
+        this.setSignals('permSignals', [
+          { name: 'Profit lock', valueText: 'standby', score: 0.20, confidence: 0.80 },
+          { name: 'Trail stops', valueText: 'standby', score: 0.18, confidence: 0.78 },
+          { name: 'TP ladder', valueText: 'standby', score: 0.16, confidence: 0.76 },
+        ]);
+        this.setSignals('slofSignals', [
+          { name: 'Overlay eligibility', valueText: 'allowed', score: 0.18, confidence: 0.86 },
+          { name: 'Sizing envelope', valueText: 'bounded', score: 0.22, confidence: 0.80 },
+          { name: 'Blocked reason', valueText: '—', score: 0.05, confidence: 0.90 },
+        ]);
+
         this.setPillar('ARES', { status: 'TRIGGERED', headline: 'Re-entry window confirmed (3/3)' });
-        this.setPillar('SLOF', { status: 'ACTIVE', headline: 'Overlay permitted (bounded)' });
+        this.setPillar('SLOF', { status: 'ACTIVE', headline: 'Overlay permitted (bounded)', score: 0.22 });
+        this.setPillar('MACRO', { status: 'OK', headline: 'Macro risk contained', score: 0.22 });
+        this.setPillar('MASTER', { status: 'OK', headline: 'Execution normal', score: 0.26 });
+        this.setPillar('KEVLAR', { status: 'OK', headline: 'Guards soft', score: 0.24 });
+        this.setPillar('PERM', { status: 'OK', headline: 'Protection standby', score: 0.20 });
 
         if (Math.random() < 0.08)
           this.pushAlert(
