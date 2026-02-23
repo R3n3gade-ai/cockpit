@@ -176,11 +176,41 @@ class Engine {
 
   private updateARASModules(patch: Partial<ARASModuleSignal>[]) {
     if (!this.snapshot.arasModules) return;
+
+    const prev = this.snapshot.arasModules;
+
     // patch array must be same length/order as existing (spec order 1..6)
-    this.snapshot.arasModules = this.snapshot.arasModules.map((m, i) => ({
+    const next = this.snapshot.arasModules.map((m, i) => ({
       ...m,
       ...(patch[i] ?? {}),
     }));
+
+    // Emit events on per-module stress_flag flips and risk thresholds
+    for (let i = 0; i < next.length; i++) {
+      const p = prev[i];
+      const n = next[i];
+      if (!p || !n) continue;
+
+      if (p.stress_flag !== n.stress_flag) {
+        const sev = n.stress_flag ? 'watch' : 'info';
+        const title = `ARAS m${i + 1}: ${n.name} stress_flag → ${n.stress_flag ? 'ON' : 'off'}`;
+        const detail = `risk ${n.risk_score.toFixed(2)} · conf ${n.confidence.toFixed(2)} · bucket ${n.source_bucket}`;
+        this.pushAlert(sev, title, detail, ['pillar:ARAS', 'module']);
+      }
+
+      // risk threshold crossing at 0.65
+      const th = 0.65;
+      const wasHigh = p.risk_score >= th;
+      const isHigh = n.risk_score >= th;
+      if (wasHigh !== isHigh) {
+        const sev = isHigh ? 'critical' : 'info';
+        const title = `ARAS m${i + 1}: ${n.name} risk ${isHigh ? '≥' : '<'} ${th}`;
+        const detail = `risk ${p.risk_score.toFixed(2)} → ${n.risk_score.toFixed(2)} · conf ${n.confidence.toFixed(2)}`;
+        this.pushAlert(sev, title, detail, ['pillar:ARAS', 'module']);
+      }
+    }
+
+    this.snapshot.arasModules = next;
 
     // apply cross-module rules (spec):
     // - stress source detection
@@ -188,6 +218,7 @@ class Engine {
     const equityIdx = [2, 3, 4]; // modules 3,4,5
     const cryptoAvg = cryptoIdx.reduce((a, idx) => a + this.snapshot.arasModules![idx].risk_score, 0) / cryptoIdx.length;
     const equityAvg = equityIdx.reduce((a, idx) => a + this.snapshot.arasModules![idx].risk_score, 0) / equityIdx.length;
+    const prevSource = this.snapshot.stressSource;
     if (cryptoAvg > 0.5 && equityAvg > 0.5 && Math.abs(cryptoAvg - equityAvg) <= 0.15) {
       this.snapshot.stressSource = 'CORRELATED';
     } else if (cryptoAvg - equityAvg > 0.15) {
@@ -197,12 +228,30 @@ class Engine {
     } else {
       this.snapshot.stressSource = 'GENERAL';
     }
+    if (prevSource !== this.snapshot.stressSource) {
+      this.pushAlert(
+        'watch',
+        `ARAS: stressSource → ${this.snapshot.stressSource}`,
+        `cryptoAvg ${cryptoAvg.toFixed(2)} · equityAvg ${equityAvg.toFixed(2)}`,
+        ['pillar:ARAS', 'module']
+      );
+    }
 
     // - 3+ stress flags => force CRASH (regime override)
     const stressCount = this.snapshot.arasModules.filter((x) => x.stress_flag).length;
+    const prevRegime = this.snapshot.regime;
+    const prevCeil = this.snapshot.exposureCeilingGross;
     if (stressCount >= 3) {
       this.snapshot.regime = 'CRASH';
       this.snapshot.exposureCeilingGross = Math.min(this.snapshot.exposureCeilingGross, 0.15);
+    }
+    if (prevRegime !== this.snapshot.regime || prevCeil !== this.snapshot.exposureCeilingGross) {
+      this.pushAlert(
+        'critical',
+        'ARAS: crash override',
+        `stress_flags ${stressCount} · regime ${prevRegime} → ${this.snapshot.regime} · ceiling ${prevCeil.toFixed(2)} → ${this.snapshot.exposureCeilingGross.toFixed(2)}`,
+        ['pillar:ARAS', 'module']
+      );
     }
 
     // Keep ARAS pillar summary consistent
