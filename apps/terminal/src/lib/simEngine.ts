@@ -287,6 +287,7 @@ class Engine {
       slofSignals: 'SLOF',
     };
 
+    const pillar = pillarByKey[key];
     const prev = (this.snapshot[key] ?? []) as PillarSignal[];
 
     // Normalize + derive level if omitted
@@ -308,7 +309,6 @@ class Engine {
       if (!p) continue;
       if (p.level === s.level) continue;
 
-      const pillar = pillarByKey[key];
       const sev = s.level === 'RISK' ? 'critical' : s.level === 'WATCH' ? 'watch' : 'info';
       const title = `${pillar}: ${s.name} → ${s.level}`;
       const detail = `${p.level} → ${s.level} · ${s.valueText} · score ${s.score.toFixed(2)} · conf ${s.confidence.toFixed(2)}`;
@@ -316,6 +316,24 @@ class Engine {
     }
 
     this.snapshot[key] = next;
+
+    // Recompute the pillar summary from its signals (spec-shape: pillar is derived, not scripted)
+    const worst = next.reduce<PillarSignal['level']>((acc, s) => {
+      if (acc === 'RISK' || s.level === 'RISK') return 'RISK';
+      if (acc === 'WATCH' || s.level === 'WATCH') return 'WATCH';
+      return 'OK';
+    }, 'OK');
+
+    const scoreAgg = next.length ? next.reduce((a, s) => a + s.score * s.confidence, 0) / next.reduce((a, s) => a + s.confidence, 0) : 0;
+    const confAgg = next.length ? next.reduce((a, s) => a + s.confidence, 0) / next.length : 0;
+
+    const status = worst === 'RISK' ? 'TRIGGERED' : worst === 'WATCH' ? 'ACTIVE' : 'OK';
+
+    this.setPillar(pillar, {
+      status,
+      score: clamp01(scoreAgg),
+      confidence: clamp01(confAgg),
+    });
   }
 
   private phaseAgeSec() {
@@ -392,11 +410,11 @@ class Engine {
         ]);
 
         this.setPillar('ARAS', { status: 'OK', headline: 'Risk-on; ceiling 90%' });
-        this.setPillar('MACRO', { status: 'OK', headline: 'Liquidity stable' });
-        this.setPillar('MASTER', { status: 'OK', headline: 'Execution normal' });
-        this.setPillar('KEVLAR', { status: 'OK', headline: 'Caps nominal' });
-        this.setPillar('PERM', { status: 'OK', headline: 'Profit protection idle' });
-        this.setPillar('SLOF', { status: 'ACTIVE', headline: 'Overlay permitted (bounded)' });
+        this.setPillar('MACRO', { headline: 'Liquidity stable' });
+        this.setPillar('MASTER', { headline: 'Execution normal' });
+        this.setPillar('KEVLAR', { headline: 'Caps nominal' });
+        this.setPillar('PERM', { headline: 'Profit protection idle' });
+        this.setPillar('SLOF', { headline: 'Overlay permitted (bounded)' });
         this.setPillar('ARES', { status: 'SUSPENDED', headline: 'Monitoring (no re-entry needed)' });
 
         if (age > 18) this.setPhase('BUILD_STRESS');
@@ -446,11 +464,11 @@ class Engine {
         setGates({ gate1_stress_normalization: 'WAIT', gate2_conviction: 'WAIT', gate3_confirmation: 'WAIT' });
 
         this.setPillar('ARAS', { status: 'ACTIVE', headline: 'Stress building (correlated)' });
-        this.setPillar('MACRO', { status: 'ACTIVE', headline: 'Liquidity ROC deteriorating', score: 0.62 });
-        this.setPillar('MASTER', { status: 'ACTIVE', headline: 'Execution defensive', score: 0.55 });
-        this.setPillar('KEVLAR', { status: 'ACTIVE', headline: 'Caps tightening', score: 0.50 });
-        this.setPillar('PERM', { status: 'ACTIVE', headline: 'Profit protection arming', score: 0.40 });
-        this.setPillar('SLOF', { status: 'SUSPENDED', headline: 'Overlay restricted', score: 0.55 });
+        this.setPillar('MACRO', { headline: 'Liquidity ROC deteriorating' });
+        this.setPillar('MASTER', { headline: 'Execution defensive' });
+        this.setPillar('KEVLAR', { headline: 'Caps tightening' });
+        this.setPillar('PERM', { headline: 'Profit protection arming' });
+        this.setPillar('SLOF', { headline: 'Overlay restricted' });
 
         if (Math.random() < 0.12)
           this.pushAlert(
@@ -511,11 +529,11 @@ class Engine {
         this.setRegime('DEFENSIVE', Math.min(this.snapshot.exposureCeilingGross, 0.4), this.snapshot.stressSource);
 
         this.setPillar('ARAS', { status: 'TRIGGERED', headline: 'Circuit breaker fired (one-way)' });
-        this.setPillar('MACRO', { status: 'TRIGGERED', headline: 'Macro shock (corr=1)', score: 0.86 });
-        this.setPillar('MASTER', { status: 'ACTIVE', headline: 'Pre-calculated orderbook executing', score: 0.80 });
-        this.setPillar('KEVLAR', { status: 'TRIGGERED', headline: 'Hard caps engaged', score: 0.78 });
-        this.setPillar('PERM', { status: 'ACTIVE', headline: 'Profit protection engaged', score: 0.74 });
-        this.setPillar('SLOF', { status: 'SUSPENDED', headline: 'Overlay blocked', score: 0.90 });
+        this.setPillar('MACRO', { headline: 'Macro shock (corr=1)' });
+        this.setPillar('MASTER', { headline: 'Pre-calculated orderbook executing' });
+        this.setPillar('KEVLAR', { headline: 'Hard caps engaged' });
+        this.setPillar('PERM', { headline: 'Profit protection engaged' });
+        this.setPillar('SLOF', { headline: 'Overlay blocked' });
 
         this.pushAlert(
           'critical',
@@ -568,11 +586,11 @@ class Engine {
           { name: 'Blocked reason', valueText: 'defensive', score: 0.42, confidence: 0.84 },
         ]);
 
-        this.setPillar('MACRO', { status: 'ACTIVE', headline: 'Macro still stressed', score: 0.64 });
-        this.setPillar('MASTER', { status: 'ACTIVE', headline: 'Deleveraging execution', score: 0.66 });
-        this.setPillar('KEVLAR', { status: 'ACTIVE', headline: 'Concentration caps enforced', score: 0.62 });
-        this.setPillar('PERM', { status: 'ACTIVE', headline: 'Profit protection active', score: 0.54 });
-        this.setPillar('SLOF', { status: 'SUSPENDED', headline: 'Overlay suspended (defensive)', score: 0.60 });
+        this.setPillar('MACRO', { headline: 'Macro still stressed' });
+        this.setPillar('MASTER', { headline: 'Deleveraging execution' });
+        this.setPillar('KEVLAR', { headline: 'Concentration caps enforced' });
+        this.setPillar('PERM', { headline: 'Profit protection active' });
+        this.setPillar('SLOF', { headline: 'Overlay suspended (defensive)' });
 
         if (Math.random() < 0.08)
           this.pushAlert('info', 'KEVLAR: caps enforced', 'Concentration + exposure caps actively constraining sizing.', [
@@ -624,11 +642,11 @@ class Engine {
         ]);
 
         this.setPillar('ARAS', { status: 'ACTIVE', headline: 'Stabilizing; waiting confirmations' });
-        this.setPillar('MACRO', { status: 'ACTIVE', headline: 'Liquidity ROC flattening', score: 0.48 });
-        this.setPillar('MASTER', { status: 'ACTIVE', headline: 'Execution normalizing', score: 0.36 });
-        this.setPillar('KEVLAR', { status: 'ACTIVE', headline: 'Caps remain active', score: 0.40 });
-        this.setPillar('PERM', { status: 'ACTIVE', headline: 'Profit protection cooling', score: 0.34 });
-        this.setPillar('SLOF', { status: 'SUSPENDED', headline: 'Overlay cooldown', score: 0.42 });
+        this.setPillar('MACRO', { headline: 'Liquidity ROC flattening' });
+        this.setPillar('MASTER', { headline: 'Execution normalizing' });
+        this.setPillar('KEVLAR', { headline: 'Caps remain active' });
+        this.setPillar('PERM', { headline: 'Profit protection cooling' });
+        this.setPillar('SLOF', { headline: 'Overlay cooldown' });
 
         // Gate 1 begins to flip as stress normalizes
         setGates({ gate1_stress_normalization: age > 10 ? 'PASS' : 'WAIT', gate2_conviction: 'WAIT', gate3_confirmation: 'WAIT' });
@@ -690,11 +708,11 @@ class Engine {
           headline: passCount >= 3 ? 'Gates passed (3/3) — ready' : `Gate checks in progress (${passCount}/3)`,
         });
 
-        this.setPillar('MACRO', { status: 'ACTIVE', headline: 'Macro normalized (gate check)', score: 0.30 });
-        this.setPillar('MASTER', { status: 'ACTIVE', headline: 'Execution ready', score: 0.28 });
-        this.setPillar('KEVLAR', { status: 'ACTIVE', headline: 'Guards soft', score: 0.30 });
-        this.setPillar('PERM', { status: 'ACTIVE', headline: 'Protection standby', score: 0.24 });
-        this.setPillar('SLOF', { status: 'ACTIVE', headline: 'Overlay allowed (bounded)', score: 0.26 });
+        this.setPillar('MACRO', { headline: 'Macro normalized (gate check)' });
+        this.setPillar('MASTER', { headline: 'Execution ready' });
+        this.setPillar('KEVLAR', { headline: 'Guards soft' });
+        this.setPillar('PERM', { headline: 'Protection standby' });
+        this.setPillar('SLOF', { headline: 'Overlay allowed (bounded)' });
 
         if (Math.random() < 0.10)
           this.pushAlert('info', 'ARES gate update', 'Stress normalization passing; awaiting conviction/confirmation.', [
@@ -739,11 +757,11 @@ class Engine {
         ]);
 
         this.setPillar('ARES', { status: 'TRIGGERED', headline: 'Re-entry window confirmed (3/3)' });
-        this.setPillar('SLOF', { status: 'ACTIVE', headline: 'Overlay permitted (bounded)', score: 0.22 });
-        this.setPillar('MACRO', { status: 'OK', headline: 'Macro risk contained', score: 0.22 });
-        this.setPillar('MASTER', { status: 'OK', headline: 'Execution normal', score: 0.26 });
-        this.setPillar('KEVLAR', { status: 'OK', headline: 'Guards soft', score: 0.24 });
-        this.setPillar('PERM', { status: 'OK', headline: 'Protection standby', score: 0.20 });
+        this.setPillar('SLOF', { headline: 'Overlay permitted (bounded)' });
+        this.setPillar('MACRO', { headline: 'Macro risk contained' });
+        this.setPillar('MASTER', { headline: 'Execution normal' });
+        this.setPillar('KEVLAR', { headline: 'Guards soft' });
+        this.setPillar('PERM', { headline: 'Protection standby' });
 
         if (Math.random() < 0.08)
           this.pushAlert(
