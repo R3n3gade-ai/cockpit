@@ -230,8 +230,18 @@ class Engine {
     key: 'macroSignals' | 'masterSignals' | 'kevlarSignals' | 'permSignals' | 'slofSignals',
     signals: Array<Omit<PillarSignal, 'level'> & { level?: PillarSignal['level'] }>
   ) {
+    const pillarByKey: Record<typeof key, PillarId> = {
+      macroSignals: 'MACRO',
+      masterSignals: 'MASTER',
+      kevlarSignals: 'KEVLAR',
+      permSignals: 'PERM',
+      slofSignals: 'SLOF',
+    };
+
+    const prev = (this.snapshot[key] ?? []) as PillarSignal[];
+
     // Normalize + derive level if omitted
-    this.snapshot[key] = signals.map((s) => {
+    const next = signals.map((s) => {
       const score = clamp01(s.score);
       const confidence = clamp01(s.confidence);
       return {
@@ -240,8 +250,23 @@ class Engine {
         score,
         confidence,
         level: s.level ?? levelFromScore(score),
-      };
+      } satisfies PillarSignal;
     });
+
+    // Emit events when signal level changes (OK ↔ WATCH ↔ RISK)
+    for (const s of next) {
+      const p = prev.find((x) => x.name === s.name);
+      if (!p) continue;
+      if (p.level === s.level) continue;
+
+      const pillar = pillarByKey[key];
+      const sev = s.level === 'RISK' ? 'critical' : s.level === 'WATCH' ? 'watch' : 'info';
+      const title = `${pillar}: ${s.name} → ${s.level}`;
+      const detail = `${p.level} → ${s.level} · ${s.valueText} · score ${s.score.toFixed(2)} · conf ${s.confidence.toFixed(2)}`;
+      this.pushAlert(sev, title, detail, [`pillar:${pillar}`, 'signal']);
+    }
+
+    this.snapshot[key] = next;
   }
 
   private phaseAgeSec() {
