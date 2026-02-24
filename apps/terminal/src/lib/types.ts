@@ -58,6 +58,13 @@ export interface PillarSignal {
 
 export interface SystemSnapshot {
   ts: number;
+
+  // Scenario playback (demo)
+  scenarioId?: 'S1' | 'S2' | 'S3';
+  scenarioName?: string;
+  scenarioT?: number; // seconds since scenario start
+  scenarioStep?: string;
+
   regime: Regime;
   exposureCeilingGross: number; // 0..1
   stressSource: StressSource;

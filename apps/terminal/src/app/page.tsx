@@ -94,6 +94,14 @@ export default function Home() {
     });
   };
 
+  const onSetScenario = async (scenarioId: 'S1' | 'S2' | 'S3') => {
+    await fetch('/api/control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'setScenario', scenarioId }),
+    });
+  };
+
   const onSetPhase = async (phase: string) => {
     await fetch('/api/control', {
       method: 'POST',
@@ -109,7 +117,9 @@ export default function Home() {
           <div className={styles.title}>ACHELION · COCKPIT</div>
           <div className={styles.subtitle}>
             {snap
-              ? `Regime ${snap.regime} · Ceiling ${fmtPct(snap.exposureCeilingGross)} · Source ${snap.stressSource}`
+              ? `${snap.scenarioId ? `Scenario ${snap.scenarioId}${snap.scenarioT != null ? ` @ ${Math.round(snap.scenarioT)}s` : ''} · ` : ''}Regime ${snap.regime} · Ceiling ${fmtPct(
+                  snap.exposureCeilingGross
+                )} · Source ${snap.stressSource}`
               : 'Connecting…'}
           </div>
         </div>
@@ -158,6 +168,11 @@ export default function Home() {
             <div className={`${styles.panel} ${styles.side}`}>
               <div className={styles.h1}>Scenario Control</div>
               <div style={{ padding: '0 16px 16px', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {(['S1', 'S2', 'S3'] as const).map((sid) => (
+                  <button key={sid} className={styles.tab} onClick={() => onSetScenario(sid)}>
+                    {sid}
+                  </button>
+                ))}
                 {['CALM', 'BUILD_STRESS', 'CIRCUIT_BREAK', 'DELEVERAGE', 'STABILIZE', 'ARES_GATES', 'REENTRY'].map(
                   (p) => (
                     <button key={p} className={styles.tab} onClick={() => onSetPhase(p)}>
@@ -167,7 +182,7 @@ export default function Home() {
                 )}
               </div>
               <div style={{ padding: '0 16px 16px' }} className={styles.small}>
-                These buttons force phases for presentation. AUTO‑DEMO cycles automatically.
+                S1/S2/S3 will become deterministic scenario tapes. Phase buttons remain for dev forcing.
               </div>
             </div>
 

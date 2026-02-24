@@ -21,6 +21,8 @@ type Phase =
   | 'ARES_GATES'
   | 'REENTRY';
 
+type ScenarioId = 'S1' | 'S2' | 'S3';
+
 const PILLARS: Array<{ id: PillarId; name: string; type: 'defensive' | 'offensive' | 'context' | 'execution' }> = [
   { id: 'ARAS', name: 'ARAS', type: 'defensive' },
   { id: 'MACRO', name: 'Macro Compass', type: 'context' },
@@ -45,8 +47,15 @@ function levelFromScore(score: number): PillarSignal['level'] {
 
 class Engine {
   private snapshot: SystemSnapshot;
+
+  // Legacy phase-driven arc (kept for dev forcing)
   private phase: Phase = 'CALM';
   private phaseT0 = now();
+
+  // Deterministic scenario playback (S1/S2/S3)
+  private scenarioId: ScenarioId | null = null;
+  private scenarioT0 = now();
+
   private timer: NodeJS.Timeout | null = null;
 
   constructor() {
@@ -73,10 +82,20 @@ class Engine {
     this.pushAlert('info', `Phase → ${phase}`, 'Scenario controller', ['system', 'scenario']);
   }
 
+  setScenario(scenarioId: ScenarioId) {
+    this.scenarioId = scenarioId;
+    this.scenarioT0 = now();
+    this.pushAlert('info', `Scenario → ${scenarioId}`, 'Scenario controller', ['system', 'scenario']);
+  }
+
+  clearScenario() {
+    this.scenarioId = null;
+    this.pushAlert('info', 'Scenario cleared', 'Scenario controller', ['system', 'scenario']);
+  }
+
   autoDemo() {
-    // Story arc is driven by the phase state machine in tick().
-    // Reset to CALM and let it progress naturally.
-    this.setPhase('CALM');
+    // Demo mode: start the main scenario (S3 is the most complete story arc for investors).
+    this.setScenario('S3');
     this.pushAlert('info', 'AUTO‑DEMO started', 'Scenario controller', ['system', 'scenario']);
   }
 
@@ -338,6 +357,49 @@ class Engine {
 
   private phaseAgeSec() {
     return (now() - this.phaseT0) / 1000;
+  }
+
+  private scenarioAgeSec() {
+    return (now() - this.scenarioT0) / 1000;
+  }
+
+  private forcePhase(phase: Phase) {
+    if (this.phase === phase) return;
+    this.phase = phase;
+    this.phaseT0 = now();
+    // Keep it quiet: we do not emit Phase→ alerts during scenario playback.
+  }
+
+  private scenarioPhaseFor(id: ScenarioId, tSec: number): Phase {
+    // Deterministic timeline. We can refine durations later.
+    const t = tSec;
+
+    if (id === 'S1') {
+      if (t < 15) return 'CALM';
+      if (t < 45) return 'BUILD_STRESS';
+      if (t < 60) return 'DELEVERAGE';
+      if (t < 80) return 'STABILIZE';
+      if (t < 95) return 'ARES_GATES';
+      return 'REENTRY';
+    }
+
+    if (id === 'S2') {
+      if (t < 12) return 'CALM';
+      if (t < 40) return 'BUILD_STRESS';
+      if (t < 58) return 'DELEVERAGE';
+      if (t < 78) return 'STABILIZE';
+      if (t < 92) return 'ARES_GATES';
+      return 'REENTRY';
+    }
+
+    // S3: correlated crash + circuit break + recovery gates
+    if (t < 12) return 'CALM';
+    if (t < 34) return 'BUILD_STRESS';
+    if (t < 44) return 'CIRCUIT_BREAK';
+    if (t < 64) return 'DELEVERAGE';
+    if (t < 84) return 'STABILIZE';
+    if (t < 104) return 'ARES_GATES';
+    return 'REENTRY';
   }
 
   private tick() {
