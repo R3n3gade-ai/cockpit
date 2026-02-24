@@ -55,6 +55,7 @@ class Engine {
   // Deterministic scenario playback (S1/S2/S3)
   private scenarioId: ScenarioId | null = null;
   private scenarioT0 = now();
+  private scenarioLastStep: Phase | null = null;
 
   private timer: NodeJS.Timeout | null = null;
 
@@ -85,11 +86,13 @@ class Engine {
   setScenario(scenarioId: ScenarioId) {
     this.scenarioId = scenarioId;
     this.scenarioT0 = now();
+    this.scenarioLastStep = null;
     this.pushAlert('info', `Scenario → ${scenarioId}`, 'Scenario controller', ['system', 'scenario']);
   }
 
   clearScenario() {
     this.scenarioId = null;
+    this.scenarioLastStep = null;
     this.pushAlert('info', 'Scenario cleared', 'Scenario controller', ['system', 'scenario']);
   }
 
@@ -406,14 +409,48 @@ class Engine {
     const t = now();
     this.snapshot.ts = t;
 
+    // Scenario playback overrides the phase timeline (deterministic tapes).
+    if (this.scenarioId) {
+      const age = this.scenarioAgeSec();
+      this.snapshot.scenarioId = this.scenarioId;
+      this.snapshot.scenarioT = age;
+      this.snapshot.scenarioName =
+        this.scenarioId === 'S1'
+          ? 'Risk-on → tightening → defensive cut'
+          : this.scenarioId === 'S2'
+            ? 'Crypto leverage unwind (crypto-dominant)'
+            : 'Correlated crash + circuit-break + recovery gates';
+
+      const phase = this.scenarioPhaseFor(this.scenarioId, age);
+      this.snapshot.scenarioStep = phase;
+
+      if (this.scenarioLastStep !== phase) {
+        this.scenarioLastStep = phase;
+        this.pushAlert('info', `Scenario step → ${phase}`, `Scenario ${this.scenarioId} @ ${Math.round(age)}s`, [
+          'system',
+          'scenario',
+        ]);
+      }
+
+      this.forcePhase(phase);
+    } else {
+      this.snapshot.scenarioId = undefined;
+      this.snapshot.scenarioT = undefined;
+      this.snapshot.scenarioName = undefined;
+      this.snapshot.scenarioStep = undefined;
+    }
+
     // Default mild drift (kept small so scenario deltas are readable)
-    for (const p of PILLARS) {
-      const cur = this.snapshot.pillars[p.id];
-      const drift = (Math.random() - 0.5) * 0.01;
-      this.setPillar(p.id, {
-        score: cur.score == null ? undefined : clamp01(cur.score + drift),
-        confidence: cur.confidence == null ? undefined : clamp01(cur.confidence + (Math.random() - 0.5) * 0.01),
-      });
+    // IMPORTANT: Scenario playback must be deterministic. Disable drift when scenarioId is set.
+    if (!this.scenarioId) {
+      for (const p of PILLARS) {
+        const cur = this.snapshot.pillars[p.id];
+        const drift = (Math.random() - 0.5) * 0.01;
+        this.setPillar(p.id, {
+          score: cur.score == null ? undefined : clamp01(cur.score + drift),
+          confidence: cur.confidence == null ? undefined : clamp01(cur.confidence + (Math.random() - 0.5) * 0.01),
+        });
+      }
     }
 
     const setGates = (g: Partial<ARESGateStatus>) => {
@@ -532,14 +569,14 @@ class Engine {
         this.setPillar('PERM', { headline: 'Profit protection arming' });
         this.setPillar('SLOF', { headline: 'Overlay restricted' });
 
-        if (Math.random() < 0.12)
+        if (!this.scenarioId && Math.random() < 0.12)
           this.pushAlert(
             'watch',
             'ARAS: correlated stress rising',
             'Crypto + equity modules elevated within 0.15 → CORRELATED.',
             ['pillar:ARAS', 'scenario']
           );
-        if (Math.random() < 0.10)
+        if (!this.scenarioId && Math.random() < 0.10)
           this.pushAlert('watch', 'MACRO: liquidity deteriorating', 'Liquidity ROC down; cross-asset corr rising.', [
             'pillar:MACRO',
             'scenario',
@@ -654,7 +691,7 @@ class Engine {
         this.setPillar('PERM', { headline: 'Profit protection active' });
         this.setPillar('SLOF', { headline: 'Overlay suspended (defensive)' });
 
-        if (Math.random() < 0.08)
+        if (!this.scenarioId && Math.random() < 0.08)
           this.pushAlert('info', 'KEVLAR: caps enforced', 'Concentration + exposure caps actively constraining sizing.', [
             'pillar:KEVLAR',
             'scenario',
@@ -776,7 +813,7 @@ class Engine {
         this.setPillar('PERM', { headline: 'Protection standby' });
         this.setPillar('SLOF', { headline: 'Overlay allowed (bounded)' });
 
-        if (Math.random() < 0.10)
+        if (!this.scenarioId && Math.random() < 0.10)
           this.pushAlert('info', 'ARES gate update', 'Stress normalization passing; awaiting conviction/confirmation.', [
             'pillar:ARES',
             'scenario',
@@ -825,7 +862,7 @@ class Engine {
         this.setPillar('KEVLAR', { headline: 'Guards soft' });
         this.setPillar('PERM', { headline: 'Protection standby' });
 
-        if (Math.random() < 0.08)
+        if (!this.scenarioId && Math.random() < 0.08)
           this.pushAlert(
             'watch',
             'Re-entry authorized (PM)',
