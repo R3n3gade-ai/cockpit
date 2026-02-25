@@ -117,9 +117,9 @@ export default function Home() {
           <div className={styles.title}>ACHELION · COCKPIT</div>
           <div className={styles.subtitle}>
             {snap
-              ? `${snap.scenarioId ? `Scenario ${snap.scenarioId}${snap.scenarioT != null ? ` @ ${Math.round(snap.scenarioT)}s` : ''} · ` : ''}Regime ${snap.regime} · Ceiling ${fmtPct(
+              ? `${snap.scenarioId ? `Scenario ${snap.scenarioId}${snap.scenarioT != null ? ` @ ${Math.round(snap.scenarioT)}s` : ''}${snap.scenarioStep ? ` · Step ${snap.scenarioStep.replace('_',' ')}` : ''} · ` : ''}Regime ${snap.regime} · Ceiling ${fmtPct(
                   snap.exposureCeilingGross
-                )} · Source ${snap.stressSource}`
+                )} · Source ${snap.stressSource} · Build ${String(snap.ts).slice(-6)}`
               : 'Connecting…'}
           </div>
         </div>
@@ -167,12 +167,26 @@ export default function Home() {
 
             <div className={`${styles.panel} ${styles.side}`}>
               <div className={styles.h1}>Scenario Control</div>
-              <div style={{ padding: '0 16px 16px', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <div style={{ padding: '0 16px 8px' }} className={styles.small}>
+                <b>Scenarios</b> (recommended)
+              </div>
+              <div style={{ padding: '0 16px 12px', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {(['S1', 'S2', 'S3'] as const).map((sid) => (
-                  <button key={sid} className={styles.tab} onClick={() => onSetScenario(sid)}>
-                    {sid}
+                  <button
+                    key={sid}
+                    className={styles.tab}
+                    style={snap?.scenarioId === sid ? { outline: '2px solid rgba(23,182,214,0.9)' } : undefined}
+                    onClick={() => onSetScenario(sid)}
+                  >
+                    {sid}{snap?.scenarioId === sid ? ' ✓' : ''}
                   </button>
                 ))}
+              </div>
+
+              <div style={{ padding: '0 16px 8px' }} className={styles.small}>
+                <b>Dev phase forcing</b> (advanced)
+              </div>
+              <div style={{ padding: '0 16px 16px', display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                 {['CALM', 'BUILD_STRESS', 'CIRCUIT_BREAK', 'DELEVERAGE', 'STABILIZE', 'ARES_GATES', 'REENTRY'].map(
                   (p) => (
                     <button key={p} className={styles.tab} onClick={() => onSetPhase(p)}>
@@ -182,7 +196,7 @@ export default function Home() {
                 )}
               </div>
               <div style={{ padding: '0 16px 16px' }} className={styles.small}>
-                S1/S2/S3 will become deterministic scenario tapes. Phase buttons remain for dev forcing.
+                Use S1/S2/S3 to run the scenario tapes. Phase buttons are for dev forcing only.
               </div>
             </div>
 
