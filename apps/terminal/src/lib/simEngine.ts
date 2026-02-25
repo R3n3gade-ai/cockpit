@@ -23,6 +23,28 @@ type Phase =
 
 type ScenarioId = 'S1' | 'S2' | 'S3';
 
+const SPEC_CEILINGS: Record<Regime, number> = {
+  RISK_ON: 1.10, // 100% physical + up to 10% SLOF
+  NEUTRAL: 0.70,
+  DEFENSIVE: 0.40,
+  CRASH: 0.15,
+};
+
+const SPEC_SLOF_MAX_BY_REGIME: Record<Regime, number> = {
+  RISK_ON: 0.20,
+  NEUTRAL: 0.10,
+  DEFENSIVE: 0.0,
+  CRASH: 0.0,
+};
+
+const SPEC_SOURCE_TARGETED_CUTS: Record<StressSource, { cryptoCut: number; equityCut: number; defenseCut: number }> = {
+  CRYPTO: { cryptoCut: 0.80, equityCut: 0.40, defenseCut: 0.0 },
+  EQUITY: { cryptoCut: 0.30, equityCut: 0.80, defenseCut: 0.0 },
+  GENERAL: { cryptoCut: 0.70, equityCut: 0.70, defenseCut: 0.0 },
+  CORRELATED: { cryptoCut: 0.80, equityCut: 0.70, defenseCut: 0.0 },
+};
+
+
 const PILLARS: Array<{ id: PillarId; name: string; type: 'defensive' | 'offensive' | 'context' | 'execution' }> = [
   { id: 'ARAS', name: 'ARAS', type: 'defensive' },
   { id: 'MACRO', name: 'Macro Compass', type: 'context' },
@@ -430,6 +452,45 @@ class Engine {
           'system',
           'scenario',
         ]);
+
+        // Deterministic story beats for S3 (harmony): circuit breaker → kill-chain → gates → re-entry.
+        if (this.scenarioId === 'S3') {
+          if (phase === 'CIRCUIT_BREAK') {
+            this.pushAlert(
+              'critical',
+              'Circuit breaker L3: QQQ -8% → CRASH (one-way)',
+              'Regime tightened automatically. Circuit breakers can tighten only; relaxation requires 2 daily confirmations + PM approval.',
+              ['scenario', 'kill-chain', 'pillar:ARAS', 'pillar:MASTER']
+            );
+          }
+
+          if (phase === 'DELEVERAGE') {
+            const cuts = SPEC_SOURCE_TARGETED_CUTS['CORRELATED'];
+            this.pushAlert(
+              'critical',
+              'Kill-chain executing (target: 30 minutes)',
+              `Priority: P1 remove ALL SLOF → P2 sell highest-beta equity → P3 reduce crypto → P4 trim remaining equity → P5 DO NOT TOUCH DAMPENER. Source=CORRELATED cuts: crypto ${(cuts.cryptoCut * 100).toFixed(0)}%, equity ${(cuts.equityCut * 100).toFixed(0)}%, defense exempt.`,
+              ['scenario', 'kill-chain', 'pillar:MASTER']
+            );
+          }
+
+          if (phase === 'ARES_GATES') {
+            this.pushAlert('info', 'ARES: begin three-gate confirmation', 'Gate 1 stress normalization → Gate 2 conviction → Gate 3 confirmation. PM approval required for deployment.', [
+              'scenario',
+              'gate',
+              'pillar:ARES',
+            ]);
+          }
+
+          if (phase === 'REENTRY') {
+            this.pushAlert('watch', 'Re-entry ready: PM approval required', 'Gates passed; deployment occurs in tranches over 2–3 trading days per ARES protocol.', [
+              'scenario',
+              'gate',
+              'pillar:ARES',
+              'pillar:MASTER',
+            ]);
+          }
+        }
       }
 
       this.forcePhase(phase);
@@ -468,7 +529,7 @@ class Engine {
     const age = this.phaseAgeSec();
     switch (this.phase) {
       case 'CALM': {
-        this.setRegime('RISK_ON', 0.9, 'GENERAL');
+        this.setRegime('RISK_ON', SPEC_CEILINGS.RISK_ON, 'GENERAL');
 
         this.updateARASModules([
           { risk_score: 0.18, stress_flag: false, confidence: 0.88 },
@@ -503,7 +564,7 @@ class Engine {
           { name: 'TP ladder', valueText: 'inactive', score: 0.10, confidence: 0.74 },
         ]);
         this.setSignals('slofSignals', [
-          { name: 'Overlay eligibility', valueText: 'allowed', score: 0.16, confidence: 0.82 },
+          { name: 'Overlay eligibility', valueText: `allowed (≤ ${(SPEC_SLOF_MAX_BY_REGIME[this.snapshot.regime] * 100).toFixed(0)}%)`, score: 0.16, confidence: 0.82 },
           { name: 'Sizing envelope', valueText: 'normal', score: 0.18, confidence: 0.78 },
           { name: 'Blocked reason', valueText: '—', score: 0.05, confidence: 0.90 },
         ]);
@@ -521,7 +582,7 @@ class Engine {
       }
 
       case 'BUILD_STRESS': {
-        this.setRegime('NEUTRAL', 0.65, 'CORRELATED');
+        this.setRegime('NEUTRAL', SPEC_CEILINGS.NEUTRAL, this.scenarioId === 'S3' ? 'CORRELATED' : 'CORRELATED');
 
         this.updateARASModules([
           { risk_score: 0.46, stress_flag: false, confidence: 0.86 },
@@ -554,7 +615,7 @@ class Engine {
           { name: 'TP ladder', valueText: 'armed', score: 0.34, confidence: 0.72 },
         ]);
         this.setSignals('slofSignals', [
-          { name: 'Overlay eligibility', valueText: 'restricted', score: 0.52, confidence: 0.76 },
+          { name: 'Overlay eligibility', valueText: `restricted (≤ ${(SPEC_SLOF_MAX_BY_REGIME[this.snapshot.regime] * 100).toFixed(0)}%)`, score: 0.52, confidence: 0.76 },
           { name: 'Sizing envelope', valueText: 'tight', score: 0.56, confidence: 0.74 },
           { name: 'Blocked reason', valueText: 'vol regime', score: 0.30, confidence: 0.82 },
         ]);
@@ -619,13 +680,17 @@ class Engine {
           { name: 'TP ladder', valueText: 'disabled', score: 0.55, confidence: 0.70 },
         ]);
         this.setSignals('slofSignals', [
-          { name: 'Overlay eligibility', valueText: 'blocked', score: 0.86, confidence: 0.84 },
+          { name: 'Overlay eligibility', valueText: `blocked (≤ ${(SPEC_SLOF_MAX_BY_REGIME[this.snapshot.regime] * 100).toFixed(0)}%)`, score: 0.86, confidence: 0.84 },
           { name: 'Sizing envelope', valueText: '0', score: 0.90, confidence: 0.86 },
           { name: 'Blocked reason', valueText: 'circuit breaker', score: 0.70, confidence: 0.92 },
         ]);
 
-        // In circuit break we hard-cap regardless
-        this.setRegime('DEFENSIVE', Math.min(this.snapshot.exposureCeilingGross, 0.4), this.snapshot.stressSource);
+        // In circuit break, spec ceilings apply. For S3 we demonstrate a CRASH-level circuit-break tightening.
+        if (this.scenarioId === 'S3') {
+          this.setRegime('CRASH', SPEC_CEILINGS.CRASH, 'CORRELATED');
+        } else {
+          this.setRegime('DEFENSIVE', Math.min(this.snapshot.exposureCeilingGross, SPEC_CEILINGS.DEFENSIVE), this.snapshot.stressSource);
+        }
 
         this.setPillar('ARAS', { status: 'TRIGGERED', headline: 'Circuit breaker fired (one-way)' });
         this.setPillar('MACRO', { headline: 'Macro shock (corr=1)' });
@@ -646,7 +711,7 @@ class Engine {
       }
 
       case 'DELEVERAGE': {
-        this.setRegime('DEFENSIVE', 0.35, this.snapshot.stressSource);
+        this.setRegime(this.scenarioId === 'S3' ? 'CRASH' : 'DEFENSIVE', this.scenarioId === 'S3' ? SPEC_CEILINGS.CRASH : 0.35, this.snapshot.stressSource);
 
         // stress still high, but tapering
         this.updateARASModules([
@@ -680,7 +745,7 @@ class Engine {
           { name: 'TP ladder', valueText: 'paused', score: 0.38, confidence: 0.74 },
         ]);
         this.setSignals('slofSignals', [
-          { name: 'Overlay eligibility', valueText: 'blocked', score: 0.70, confidence: 0.86 },
+          { name: 'Overlay eligibility', valueText: `blocked (≤ ${(SPEC_SLOF_MAX_BY_REGIME[this.snapshot.regime] * 100).toFixed(0)}%)`, score: 0.70, confidence: 0.86 },
           { name: 'Sizing envelope', valueText: 'tight', score: 0.60, confidence: 0.78 },
           { name: 'Blocked reason', valueText: 'defensive', score: 0.42, confidence: 0.84 },
         ]);
@@ -702,7 +767,7 @@ class Engine {
       }
 
       case 'STABILIZE': {
-        this.setRegime('NEUTRAL', 0.55, 'GENERAL');
+        this.setRegime(this.scenarioId === 'S3' ? 'DEFENSIVE' : 'NEUTRAL', this.scenarioId === 'S3' ? SPEC_CEILINGS.DEFENSIVE : 0.55, 'GENERAL');
 
         this.updateARASModules([
           { risk_score: 0.34, stress_flag: false, confidence: 0.86 },
@@ -755,7 +820,7 @@ class Engine {
       }
 
       case 'ARES_GATES': {
-        this.setRegime('NEUTRAL', 0.6, 'GENERAL');
+        this.setRegime('NEUTRAL', this.scenarioId === 'S3' ? SPEC_CEILINGS.NEUTRAL : 0.6, 'GENERAL');
 
         // ARAS calm enough to allow gates to proceed
         this.updateARASModules([
@@ -789,7 +854,7 @@ class Engine {
           { name: 'TP ladder', valueText: 'standby', score: 0.20, confidence: 0.74 },
         ]);
         this.setSignals('slofSignals', [
-          { name: 'Overlay eligibility', valueText: 'allowed', score: 0.22, confidence: 0.84 },
+          { name: 'Overlay eligibility', valueText: `allowed (≤ ${(SPEC_SLOF_MAX_BY_REGIME[this.snapshot.regime] * 100).toFixed(0)}%)`, score: 0.22, confidence: 0.84 },
           { name: 'Sizing envelope', valueText: 'bounded', score: 0.26, confidence: 0.78 },
           { name: 'Blocked reason', valueText: '—', score: 0.05, confidence: 0.90 },
         ]);
@@ -824,7 +889,7 @@ class Engine {
       }
 
       case 'REENTRY': {
-        this.setRegime('RISK_ON', 0.85, 'GENERAL');
+        this.setRegime('RISK_ON', this.scenarioId === 'S3' ? SPEC_CEILINGS.RISK_ON : 0.85, 'GENERAL');
 
         setGates({ gate1_stress_normalization: 'PASS', gate2_conviction: 'PASS', gate3_confirmation: 'PASS' });
 
@@ -850,7 +915,7 @@ class Engine {
           { name: 'TP ladder', valueText: 'standby', score: 0.16, confidence: 0.76 },
         ]);
         this.setSignals('slofSignals', [
-          { name: 'Overlay eligibility', valueText: 'allowed', score: 0.18, confidence: 0.86 },
+          { name: 'Overlay eligibility', valueText: `allowed (≤ ${(SPEC_SLOF_MAX_BY_REGIME[this.snapshot.regime] * 100).toFixed(0)}%)`, score: 0.18, confidence: 0.86 },
           { name: 'Sizing envelope', valueText: 'bounded', score: 0.22, confidence: 0.80 },
           { name: 'Blocked reason', valueText: '—', score: 0.05, confidence: 0.90 },
         ]);
