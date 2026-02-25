@@ -66,7 +66,7 @@ export interface SystemSnapshot {
   scenarioStep?: string;
 
   regime: Regime;
-  exposureCeilingGross: number; // 0..1
+  exposureCeilingGross: number; // 0..1.2 (100% physical + up to 10% SLOF synthetic; keep headroom)
   stressSource: StressSource;
 
   // Decompositions for drilldowns

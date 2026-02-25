@@ -61,6 +61,12 @@ function clamp01(x: number) {
   return Math.max(0, Math.min(1, x));
 }
 
+// Exposure ceilings can exceed 100% gross in RISK_ON due to SLOF synthetic overlay allowance.
+// Clamp to a reasonable demo max rather than 1.0.
+function clampCeiling(x: number) {
+  return Math.max(0, Math.min(1.2, x));
+}
+
 function levelFromScore(score: number): PillarSignal['level'] {
   if (score >= 0.7) return 'RISK';
   if (score >= 0.45) return 'WATCH';
@@ -214,7 +220,7 @@ class Engine {
 
   private setRegime(regime: Regime, ceiling: number, stressSource: StressSource) {
     this.snapshot.regime = regime;
-    this.snapshot.exposureCeilingGross = clamp01(ceiling);
+    this.snapshot.exposureCeilingGross = clampCeiling(ceiling);
     this.snapshot.stressSource = stressSource;
   }
 
@@ -577,7 +583,7 @@ class Engine {
         this.setPillar('SLOF', { headline: 'Overlay permitted (bounded)' });
         this.setPillar('ARES', { status: 'SUSPENDED', headline: 'Monitoring (no re-entry needed)' });
 
-        if (age > 18) this.setPhase('BUILD_STRESS');
+        if (!this.scenarioId && age > 18) this.setPhase('BUILD_STRESS');
         break;
       }
 
@@ -643,7 +649,7 @@ class Engine {
             'scenario',
           ]);
 
-        if (age > 25) this.setPhase('CIRCUIT_BREAK');
+        if (!this.scenarioId && age > 25) this.setPhase('CIRCUIT_BREAK');
         break;
       }
 
@@ -706,7 +712,8 @@ class Engine {
           ['pillar:ARAS', 'pillar:MASTER', 'scenario']
         );
 
-        this.setPhase('DELEVERAGE');
+        if (this.scenarioId) this.forcePhase('DELEVERAGE');
+        else this.setPhase('DELEVERAGE');
         break;
       }
 
@@ -762,7 +769,7 @@ class Engine {
             'scenario',
           ]);
 
-        if (age > 18) this.setPhase('STABILIZE');
+        if (!this.scenarioId && age > 18) this.setPhase('STABILIZE');
         break;
       }
 
@@ -815,7 +822,7 @@ class Engine {
         // Gate 1 begins to flip as stress normalizes
         setGates({ gate1_stress_normalization: age > 10 ? 'PASS' : 'WAIT', gate2_conviction: 'WAIT', gate3_confirmation: 'WAIT' });
 
-        if (age > 20) this.setPhase('ARES_GATES');
+        if (!this.scenarioId && age > 20) this.setPhase('ARES_GATES');
         break;
       }
 
@@ -884,7 +891,7 @@ class Engine {
             'scenario',
           ]);
 
-        if (age > 25) this.setPhase('REENTRY');
+        if (!this.scenarioId && age > 25) this.setPhase('REENTRY');
         break;
       }
 
@@ -935,7 +942,7 @@ class Engine {
             ['pillar:ARES', 'pillar:SLOF', 'scenario']
           );
 
-        if (age > 25) this.setPhase('CALM');
+        if (!this.scenarioId && age > 25) this.setPhase('CALM');
         break;
       }
     }
