@@ -56,6 +56,40 @@ export interface PillarSignal {
   level: PillarSignalLevel;
 }
 
+export type Sleeve = 'EQUITY' | 'CRYPTO' | 'DEFENSE' | 'CASH_OPTIONS';
+
+export interface PortfolioPosition {
+  ticker: string;
+  sleeve: Sleeve;
+  conviction?: number;
+  slofEligible?: boolean;
+  tranche?: 1 | 2 | 3 | 4;
+  currentPct: number; // 0..1 (as % NAV)
+  targetPct: number; // 0..1 (as % NAV)
+  reason?: string;
+}
+
+export interface PortfolioSnapshot {
+  // Architecture AB (targets)
+  targetSleeves: { equity: number; crypto: number; defense: number; cashOptions: number };
+
+  // Current sleeve weights (demo)
+  sleeves: { equity: number; crypto: number; defense: number; cashOptions: number };
+
+  // Key ceilings per playbook (Eq+Cr ceiling; defense is structural and shown separately)
+  eqCryptoCeiling: number;
+  slofMax: number;
+
+  // ARES re-entry status (demo)
+  reentry?: {
+    pmApproved: boolean;
+    tranche: 0 | 1 | 2 | 3 | 4;
+    trancheCeiling: number; // 0..1 (Eq+Cr ceiling during re-entry)
+  };
+
+  positions: PortfolioPosition[];
+}
+
 export interface SystemSnapshot {
   ts: number;
 
@@ -68,6 +102,9 @@ export interface SystemSnapshot {
   regime: Regime;
   exposureCeilingGross: number; // 0..1.2 (100% physical + up to 10% SLOF synthetic; keep headroom)
   stressSource: StressSource;
+
+  // Portfolio / positions (demo)
+  portfolio?: PortfolioSnapshot;
 
   // Decompositions for drilldowns
   arasModules?: ARASModuleSignal[];

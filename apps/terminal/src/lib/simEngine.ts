@@ -4,7 +4,10 @@ import type {
   ARASModuleSignal,
   PillarId,
   PillarSignal,
+  PortfolioPosition,
+  PortfolioSnapshot,
   Regime,
+  Sleeve,
   StressSource,
   SystemSnapshot,
 } from './types';
@@ -23,8 +26,19 @@ type Phase =
 
 type ScenarioId = 'S1' | 'S2' | 'S3';
 
+// NOTE: In the playbook, the core ceiling applies to Eq+Crypto gross; defense sleeve is structural (14%)
+// and is exempt from deleveraging. The demo header still shows a single gross number; portfolio panel
+// shows the playbook decomposition.
+const SPEC_EQCR_CEILINGS: Record<Regime, number> = {
+  RISK_ON: 1.0,
+  NEUTRAL: 0.70,
+  DEFENSIVE: 0.40,
+  CRASH: 0.15,
+};
+
+// Header ceiling used by the cockpit (kept for now as a single number).
 const SPEC_CEILINGS: Record<Regime, number> = {
-  RISK_ON: 1.10, // 100% physical + up to 10% SLOF
+  RISK_ON: 1.10, // base 100% + synthetic overlay headroom (demo)
   NEUTRAL: 0.70,
   DEFENSIVE: 0.40,
   CRASH: 0.15,
@@ -36,6 +50,149 @@ const SPEC_SLOF_MAX_BY_REGIME: Record<Regime, number> = {
   DEFENSIVE: 0.0,
   CRASH: 0.0,
 };
+
+const ARCH_AB_TARGET_SLEEVES = {
+  equity: 0.58,
+  crypto: 0.20,
+  defense: 0.14,
+  cashOptions: 0.08,
+} as const;
+
+// Minimal, spec-aligned target weights (sums within sleeves; this drives demo positions table).
+const TARGET_EQUITY: Array<{ ticker: string; pct: number; conviction?: number; slofEligible?: boolean; tranche?: 1 | 2 | 3 | 4 }> = [
+  { ticker: 'TSLA', pct: 0.088, conviction: 10, slofEligible: true, tranche: 1 },
+  { ticker: 'NVDA', pct: 0.088, conviction: 10, slofEligible: true, tranche: 1 },
+  { ticker: 'AMD', pct: 0.072, conviction: 9, slofEligible: false, tranche: 2 },
+  { ticker: 'MU', pct: 0.057, conviction: 8, slofEligible: false, tranche: 2 },
+  { ticker: 'PLTR', pct: 0.057, conviction: 8, slofEligible: false, tranche: 2 },
+  { ticker: 'ALAB', pct: 0.057, conviction: 8, slofEligible: false, tranche: 2 },
+  { ticker: 'MRVL', pct: 0.043, conviction: 7, slofEligible: false, tranche: 3 },
+  { ticker: 'ANET', pct: 0.043, conviction: 7, slofEligible: false, tranche: 3 },
+  { ticker: 'AVGO', pct: 0.043, conviction: 7, slofEligible: false, tranche: 3 },
+  { ticker: 'ARM', pct: 0.032, conviction: 6, slofEligible: false, tranche: 3 },
+];
+
+const TARGET_CRYPTO: Array<{ ticker: string; pct: number; tranche?: 1 | 2 | 3 | 4 }> = [
+  { ticker: 'IBIT', pct: 0.16, tranche: 1 },
+  { ticker: 'BSOL', pct: 0.04, tranche: 3 },
+];
+
+const TARGET_DEFENSE: Array<{ ticker: string; pct: number }> = [
+  { ticker: 'TLT', pct: 0.07 },
+  { ticker: 'SGOL', pct: 0.04 },
+  { ticker: 'DBMF', pct: 0.03 },
+];
+
+function sumPct(xs: Array<{ pct: number }>) {
+  return xs.reduce((a, x) => a + x.pct, 0);
+}
+
+function normalizeTo<T extends { pct: number }>(xs: T[], total: number): T[] {
+  const s = sumPct(xs) || 1;
+  return xs.map((x) => ({ ...(x as object), pct: (x.pct / s) * total }) as T);
+}
+
+function bySleeveWeights(regime: Regime, eqCrCeiling: number) {
+  const eqShare = ARCH_AB_TARGET_SLEEVES.equity / (ARCH_AB_TARGET_SLEEVES.equity + ARCH_AB_TARGET_SLEEVES.crypto);
+  const crShare = 1 - eqShare;
+  return {
+    equity: eqCrCeiling * eqShare,
+    crypto: eqCrCeiling * crShare,
+    defense: ARCH_AB_TARGET_SLEEVES.defense,
+    cashOptions: Math.max(0, 1 - (eqCrCeiling + ARCH_AB_TARGET_SLEEVES.defense)),
+  };
+}
+
+function buildPositions(opts: {
+  regime: Regime;
+  stressSource: StressSource;
+  eqCrCeiling: number;
+  reentry?: { pmApproved: boolean; tranche: 0 | 1 | 2 | 3 | 4; trancheCeiling: number };
+}): PortfolioPosition[] {
+  const { regime, stressSource } = opts;
+
+  // Determine current Eq+Cr ceiling for allocation.
+  const effEqCr = opts.reentry ? opts.reentry.trancheCeiling : opts.eqCrCeiling;
+
+  // Sleeve weights under the ceiling.
+  const sleeves = bySleeveWeights(regime, effEqCr);
+
+  const eqTargets = normalizeTo(TARGET_EQUITY, sleeves.equity);
+  const crTargets = normalizeTo(TARGET_CRYPTO, sleeves.crypto);
+
+  // Apply source-targeted cuts during stress (very simplified: reduce only the stressed sleeve).
+  const cuts = SPEC_SOURCE_TARGETED_CUTS[stressSource];
+
+  const applyCut = (sleeve: Sleeve, base: number) => {
+    if (sleeve === 'CRYPTO') return base * (regime === 'CRASH' || regime === 'DEFENSIVE' ? (1 - cuts.cryptoCut) : 1);
+    if (sleeve === 'EQUITY') return base * (regime === 'CRASH' || regime === 'DEFENSIVE' ? (1 - cuts.equityCut) : 1);
+    return base;
+  };
+
+  // Re-entry tranche gating: positions in later tranches are 0 until tranche reached.
+  const tranche = opts.reentry?.tranche ?? 0;
+  const trancheAllows = (pTranche?: 1 | 2 | 3 | 4) => {
+    if (!pTranche) return true;
+    if (!opts.reentry) return true;
+    if (!opts.reentry.pmApproved) return false;
+    return tranche >= pTranche;
+  };
+
+  const eq = eqTargets.map((x) => ({
+    ticker: x.ticker,
+    sleeve: 'EQUITY' as const,
+    conviction: x.conviction,
+    slofEligible: x.slofEligible,
+    tranche: x.tranche,
+    targetPct: x.pct,
+    currentPct: trancheAllows(x.tranche) ? applyCut('EQUITY', x.pct) : 0,
+    reason: opts.reentry ? 'ARES re-entry' : regime === 'RISK_ON' ? 'Normal allocation' : 'Ceiling + cuts',
+  }));
+
+  const cr = crTargets.map((x) => ({
+    ticker: x.ticker,
+    sleeve: 'CRYPTO' as const,
+    tranche: x.tranche,
+    targetPct: x.pct,
+    currentPct: trancheAllows(x.tranche) ? applyCut('CRYPTO', x.pct) : 0,
+    reason: opts.reentry ? 'ARES re-entry' : regime === 'RISK_ON' ? 'Normal allocation' : 'Ceiling + cuts',
+  }));
+
+  const def = TARGET_DEFENSE.map((x) => ({
+    ticker: x.ticker,
+    sleeve: 'DEFENSE' as const,
+    targetPct: x.pct,
+    currentPct: x.pct, // structural + exempt in demo
+    reason: 'Structural defense (exempt)',
+  }));
+
+  const cash = [{
+    ticker: 'CASH+OPT',
+    sleeve: 'CASH_OPTIONS' as const,
+    targetPct: ARCH_AB_TARGET_SLEEVES.cashOptions,
+    currentPct: bySleeveWeights(regime, effEqCr).cashOptions,
+    reason: 'Cash + options sleeve',
+  }];
+
+  return [...eq, ...cr, ...def, ...cash].sort((a, b) => b.currentPct - a.currentPct);
+}
+
+function buildPortfolioSnapshot(opts: {
+  regime: Regime;
+  stressSource: StressSource;
+  reentry?: { pmApproved: boolean; tranche: 0 | 1 | 2 | 3 | 4; trancheCeiling: number };
+}): PortfolioSnapshot {
+  const eqCrCeiling = opts.reentry ? opts.reentry.trancheCeiling : SPEC_EQCR_CEILINGS[opts.regime];
+  const sleeves = bySleeveWeights(opts.regime, eqCrCeiling);
+  return {
+    targetSleeves: { ...ARCH_AB_TARGET_SLEEVES },
+    sleeves,
+    eqCryptoCeiling: eqCrCeiling,
+    slofMax: SPEC_SLOF_MAX_BY_REGIME[opts.regime],
+    reentry: opts.reentry,
+    positions: buildPositions({ regime: opts.regime, stressSource: opts.stressSource, eqCrCeiling, reentry: opts.reentry }),
+  };
+}
 
 const SPEC_SOURCE_TARGETED_CUTS: Record<StressSource, { cryptoCut: number; equityCut: number; defenseCut: number }> = {
   CRYPTO: { cryptoCut: 0.80, equityCut: 0.40, defenseCut: 0.0 },
@@ -85,6 +242,10 @@ class Engine {
   private scenarioT0 = now();
   private scenarioLastStep: Phase | null = null;
 
+  // PM approval + tranche deployment (ARES)
+  private pmReentryApproved = false;
+  private pmReentryApprovedAt: number | null = null;
+
   private timer: NodeJS.Timeout | null = null;
 
   constructor() {
@@ -115,12 +276,19 @@ class Engine {
     this.scenarioId = scenarioId;
     this.scenarioT0 = now();
     this.scenarioLastStep = null;
+
+    // Reset PM approval / tranche state on new scenario.
+    this.pmReentryApproved = false;
+    this.pmReentryApprovedAt = null;
+
     this.pushAlert('info', `Scenario → ${scenarioId}`, 'Scenario controller', ['system', 'scenario']);
   }
 
   clearScenario() {
     this.scenarioId = null;
     this.scenarioLastStep = null;
+    this.pmReentryApproved = false;
+    this.pmReentryApprovedAt = null;
     this.pushAlert('info', 'Scenario cleared', 'Scenario controller', ['system', 'scenario']);
   }
 
@@ -128,6 +296,16 @@ class Engine {
     // Demo mode: start the main scenario (S3 is the most complete story arc for investors).
     this.setScenario('S3');
     this.pushAlert('info', 'AUTO‑DEMO started', 'Scenario controller', ['system', 'scenario']);
+  }
+
+  approveReentry() {
+    this.pmReentryApproved = true;
+    this.pmReentryApprovedAt = now();
+    this.pushAlert('watch', 'Re-entry approved (PM)', 'Deployment will occur in tranches per ARES protocol.', [
+      'pillar:ARES',
+      'pillar:MASTER',
+      'scenario',
+    ]);
   }
 
   private makeInitial(): SystemSnapshot {
@@ -174,7 +352,7 @@ class Engine {
     return {
       ts: t,
       regime: 'RISK_ON',
-      exposureCeilingGross: 0.9,
+      exposureCeilingGross: SPEC_CEILINGS.RISK_ON,
       stressSource: 'GENERAL',
       arasModules,
       aresGates,
@@ -437,6 +615,7 @@ class Engine {
     const t = now();
     this.snapshot.ts = t;
 
+    // Portfolio/positions are recomputed at end of tick (after regime + re-entry state).
     // Scenario playback overrides the phase timeline (deterministic tapes).
     if (this.scenarioId) {
       const age = this.scenarioAgeSec();
@@ -575,13 +754,13 @@ class Engine {
           { name: 'Blocked reason', valueText: '—', score: 0.05, confidence: 0.90 },
         ]);
 
-        this.setPillar('ARAS', { status: 'OK', headline: 'Risk-on; ceiling 90%' });
+        this.setPillar('ARAS', { status: 'OK', headline: `Risk-on; ceiling ${(SPEC_CEILINGS.RISK_ON * 100).toFixed(0)}%` });
         this.setPillar('MACRO', { headline: 'Liquidity stable' });
         this.setPillar('MASTER', { headline: 'Execution normal' });
         this.setPillar('KEVLAR', { headline: 'Caps nominal' });
         this.setPillar('PERM', { headline: 'Profit protection idle' });
         this.setPillar('SLOF', { headline: 'Overlay permitted (bounded)' });
-        this.setPillar('ARES', { status: 'SUSPENDED', headline: 'Monitoring (no re-entry needed)' });
+        this.setPillar('ARES', { status: 'SUSPENDED', headline: 'Suspended (not in re-entry window)' });
 
         if (!this.scenarioId && age > 18) this.setPhase('BUILD_STRESS');
         break;
@@ -705,12 +884,15 @@ class Engine {
         this.setPillar('PERM', { headline: 'Profit protection engaged' });
         this.setPillar('SLOF', { headline: 'Overlay blocked' });
 
-        this.pushAlert(
-          'critical',
-          'Circuit breaker: intraday deleverage',
-          'Auto-trigger tightened regime. Relaxation requires 2 daily confirmations + PM approval.',
-          ['pillar:ARAS', 'pillar:MASTER', 'scenario']
-        );
+        // Avoid duplicate circuit-breaker alerts during deterministic scenario playback (we emit story beats above).
+        if (!this.scenarioId) {
+          this.pushAlert(
+            'critical',
+            'Circuit breaker: intraday deleverage',
+            'Auto-trigger tightened regime. Relaxation requires 2 daily confirmations + PM approval.',
+            ['pillar:ARAS', 'pillar:MASTER', 'scenario']
+          );
+        }
 
         if (this.scenarioId) this.forcePhase('DELEVERAGE');
         else this.setPhase('DELEVERAGE');
@@ -896,7 +1078,29 @@ class Engine {
       }
 
       case 'REENTRY': {
-        this.setRegime('RISK_ON', this.scenarioId === 'S3' ? SPEC_CEILINGS.RISK_ON : 0.85, 'GENERAL');
+        // Spec (PM Playbook §4): re-entry requires explicit PM approval and staged deployment (2–3 days).
+        // ARES Spec: tranche ceilings 25/50/75/100 as confidence improves. In demo time we compress.
+
+        if (this.scenarioId === 'S3' && !this.pmReentryApproved) {
+          this.setRegime('NEUTRAL', SPEC_CEILINGS.NEUTRAL, 'GENERAL');
+          this.setPillar('ARES', { status: 'TRIGGERED', headline: 'Re-entry ready — PM approval required' });
+        } else if (this.scenarioId === 'S3' && this.pmReentryApproved) {
+          const dt = this.pmReentryApprovedAt ? (now() - this.pmReentryApprovedAt) / 1000 : 0;
+          // Compressed tranche schedule for demo: 0-10s=25%, 10-20s=50%, 20-30s=75%, 30s+=100%
+          const tranche = dt < 10 ? 1 : dt < 20 ? 2 : dt < 30 ? 3 : 4;
+          const ceiling = tranche === 1 ? 0.25 : tranche === 2 ? 0.5 : tranche === 3 ? 0.75 : 1.0;
+          // Once we reach full re-entry (100%), we can return to RISK_ON + SLOF allowance.
+          if (tranche < 4) {
+            this.setRegime('NEUTRAL', ceiling, 'GENERAL');
+            this.setPillar('ARES', { status: 'ACTIVE', headline: `Deploying tranches (T${tranche}/4) · ceiling ${Math.round(ceiling * 100)}%` });
+          } else {
+            this.setRegime('RISK_ON', SPEC_CEILINGS.RISK_ON, 'GENERAL');
+            this.setPillar('ARES', { status: 'TRIGGERED', headline: 'Full re-entry (T4/4) — restored' });
+          }
+        } else {
+          // Non-S3 paths keep legacy behavior.
+          this.setRegime('RISK_ON', this.scenarioId === 'S3' ? SPEC_CEILINGS.RISK_ON : 0.85, 'GENERAL');
+        }
 
         setGates({ gate1_stress_normalization: 'PASS', gate2_conviction: 'PASS', gate3_confirmation: 'PASS' });
 
@@ -927,7 +1131,10 @@ class Engine {
           { name: 'Blocked reason', valueText: '—', score: 0.05, confidence: 0.90 },
         ]);
 
-        this.setPillar('ARES', { status: 'TRIGGERED', headline: 'Re-entry window confirmed (3/3)' });
+        // ARES pillar headline is managed above for S3 (PM approval + tranches).
+        if (!(this.scenarioId === 'S3')) {
+          this.setPillar('ARES', { status: 'TRIGGERED', headline: 'Re-entry window confirmed (3/3)' });
+        }
         this.setPillar('SLOF', { headline: 'Overlay permitted (bounded)' });
         this.setPillar('MACRO', { headline: 'Macro risk contained' });
         this.setPillar('MASTER', { headline: 'Execution normal' });
@@ -946,6 +1153,25 @@ class Engine {
         break;
       }
     }
+
+    // Compute portfolio snapshot (positions / sleeves) from current regime + ARES re-entry state.
+    const reentry =
+      this.scenarioId === 'S3'
+        ? {
+            pmApproved: this.pmReentryApproved,
+            tranche: (this.pmReentryApproved ? (this.snapshot.regime === 'RISK_ON' ? 4 : this.snapshot.exposureCeilingGross <= 0.26 ? 1 : this.snapshot.exposureCeilingGross <= 0.51 ? 2 : this.snapshot.exposureCeilingGross <= 0.76 ? 3 : 4) : 0) as 0 | 1 | 2 | 3 | 4,
+            trancheCeiling: this.pmReentryApproved
+              ? // If approved, use the current ceiling as tranche ceiling during compressed deployment.
+                Math.min(1.0, Math.max(0.25, this.snapshot.exposureCeilingGross))
+              : SPEC_EQCR_CEILINGS.NEUTRAL,
+          }
+        : undefined;
+
+    this.snapshot.portfolio = buildPortfolioSnapshot({
+      regime: this.snapshot.regime,
+      stressSource: this.snapshot.stressSource,
+      reentry,
+    });
   }
 }
 

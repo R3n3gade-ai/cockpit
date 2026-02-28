@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import styles from './page.module.css';
-import type { PillarId, PillarSignal, Severity, SystemSnapshot } from '@/lib/types';
+import type { PillarId, PillarSignal, PortfolioPosition, Severity, SystemSnapshot } from '@/lib/types';
 
 type DrawerTab = 'overview' | 'logic' | 'history' | 'events';
 
@@ -110,6 +110,14 @@ export default function Home() {
     });
   };
 
+  const onApproveReentry = async () => {
+    await fetch('/api/control', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'approveReentry' }),
+    });
+  };
+
   return (
     <div className={`${styles.page} hudGrid`}>
       <div className={styles.topbar}>
@@ -197,6 +205,67 @@ export default function Home() {
               </div>
               <div style={{ padding: '0 16px 16px' }} className={styles.small}>
                 Use S1/S2/S3 to run the scenario tapes. Phase buttons are for dev forcing only.
+              </div>
+
+              {snap?.scenarioStep === 'REENTRY' ? (
+                <div style={{ padding: '0 16px 16px' }}>
+                  <button className={styles.button} style={{ width: '100%' }} onClick={onApproveReentry}>
+                    APPROVE RE‑ENTRY (PM)
+                  </button>
+                  <div className={styles.small} style={{ marginTop: 8 }}>
+                    Per PM Playbook: re-entry requires explicit PM approval; deployment occurs in tranches.
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <div className={`${styles.panel} ${styles.portfolio}`}>
+              <div className={styles.h1}>Portfolio & Positions</div>
+
+              <div style={{ padding: '0 16px 10px' }} className={styles.small}>
+                Architecture AB targets: 58/20/14/8 (Eq/Crypto/Defense/Cash+Options). Defense is structural + exempt.
+              </div>
+
+              <div style={{ padding: '0 16px 12px', display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10 }}>
+                <div className={styles.alertItem}>
+                  <div className={styles.alertTitle}>Eq+Crypto ceiling</div>
+                  <div className={styles.alertDetail}>
+                    {snap?.portfolio ? fmtPct(snap.portfolio.eqCryptoCeiling) : '—'}
+                    {snap?.portfolio ? ` · SLOF max ${fmtPct(snap.portfolio.slofMax)}` : ''}
+                  </div>
+                </div>
+                <div className={styles.alertItem}>
+                  <div className={styles.alertTitle}>Sleeves (current)</div>
+                  <div className={styles.alertDetail}>
+                    {snap?.portfolio
+                      ? `Eq ${fmtPct(snap.portfolio.sleeves.equity)} · Cr ${fmtPct(snap.portfolio.sleeves.crypto)} · Def ${fmtPct(snap.portfolio.sleeves.defense)} · Cash ${fmtPct(snap.portfolio.sleeves.cashOptions)}`
+                      : '—'}
+                  </div>
+                </div>
+              </div>
+
+              {snap?.portfolio?.reentry ? (
+                <div style={{ padding: '0 16px 12px' }} className={styles.small}>
+                  ARES re-entry: {snap.portfolio.reentry.pmApproved ? 'PM approved' : 'PM approval required'}
+                  {snap.portfolio.reentry.pmApproved ? ` · tranche T${snap.portfolio.reentry.tranche}/4` : ''}
+                </div>
+              ) : null}
+
+              <div className={styles.alertList} style={{ maxHeight: 260 }}>
+                {(snap?.portfolio?.positions ?? []).slice(0, 14).map((p: PortfolioPosition) => (
+                  <div key={p.ticker} className={styles.alertItem}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10 }}>
+                      <div className={styles.alertTitle}>
+                        {p.ticker} · {p.sleeve}
+                        {p.tranche ? ` · T${p.tranche}` : ''}
+                      </div>
+                      <div className={styles.badge}>
+                        {fmtPct(p.currentPct)} / {fmtPct(p.targetPct)}
+                      </div>
+                    </div>
+                    {p.reason ? <div className={styles.alertDetail}>{p.reason}</div> : null}
+                  </div>
+                ))}
               </div>
             </div>
 
